@@ -382,6 +382,44 @@ fn compaction_merges_free_space() {
 }
 
 #[test]
+fn compaction_closes_gaps_too_small_for_the_files_after_them() {
+    for journal in ["metadata", "full", "off"] {
+        let mut fs =
+            Fs::format(MemDevice::new(2 * MIB), &options(1024, Layout::United), "g").unwrap();
+        fs.set_config_value("journal", journal).unwrap();
+        for i in 0..20 {
+            put(&mut fs, &format!("/small{i}"), &pattern(1000, i as u8));
+            put(&mut fs, &format!("/large{i}"), &pattern(20_000, i as u8));
+        }
+        for i in 0..20 {
+            fs.unlink(ROOT_INO, &format!("small{i}")).unwrap();
+        }
+        fs.commit().unwrap();
+        let free = fs.statfs().free;
+        let report = fs.compact().unwrap();
+        let extents: Vec<(u64, u64)> = fs.space().free_extents().collect();
+        if journal == "off" {
+            // Shadow paging moves the chunks of the last commit, leaving
+            // their old blocks as a few gaps.
+            assert!(report.largest_after + 4 >= free, "{report:?} {extents:?}");
+        } else {
+            assert_eq!(extents.len(), 1, "{journal}: {extents:?}");
+            assert_eq!(report.largest_after, free, "{journal}");
+        }
+        for i in 0..20 {
+            assert_eq!(
+                get(&mut fs, &format!("/large{i}")),
+                pattern(20_000, i as u8)
+            );
+        }
+        assert_clean(&fs);
+        let mut fs = reopen(fs);
+        assert_eq!(get(&mut fs, "/large19"), pattern(20_000, 19));
+        assert_clean(&fs);
+    }
+}
+
+#[test]
 fn a_large_file_fits_after_automatic_compaction() {
     let mut fs = Fs::format(MemDevice::new(MIB), &options(1024, Layout::United), "a").unwrap();
     for i in 0..30 {
@@ -627,6 +665,35 @@ fn crashes_never_corrupt_metadata() {
                     && get(fs, "/old1") == pattern(3000, 1)
                     && get(fs, "/old2") == pattern(3000, 2)
             },
+        );
+    }
+}
+
+#[test]
+fn crashes_during_compaction_keep_every_file() {
+    let intact =
+        |fs: &mut Fs<MemDevice>| (0..6).all(|i| get(fs, &format!("/large{i}")) == pattern(9000, i));
+    for journal in ["metadata", "full", "off"] {
+        crash_everywhere(
+            journal,
+            |fs| {
+                for i in 0..6 {
+                    put(fs, &format!("/small{i}"), &pattern(500, i));
+                    put(fs, &format!("/large{i}"), &pattern(9000, i));
+                }
+                for i in 0..6 {
+                    fs.unlink(ROOT_INO, &format!("small{i}")).unwrap();
+                }
+            },
+            |fs| {
+                fs.compact().unwrap();
+            },
+            |fs| {
+                // Without a journal the last commit leaves a few small gaps.
+                let slack = if journal == "off" { 4 } else { 0 };
+                fs.space().largest_free() + slack >= fs.statfs().free && intact(fs)
+            },
+            intact,
         );
     }
 }

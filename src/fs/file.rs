@@ -330,9 +330,122 @@ impl<D: BlockDevice> Fs<D> {
         Ok(())
     }
 
+    /// How high the free space sits: the sum of the addresses of the free
+    /// blocks. Moving data down raises it, so compaction stops as soon as
+    /// a round fails to raise it, which bounds the work.
+    fn free_height(&self) -> u128 {
+        self.space
+            .free_extents()
+            .map(|(start, len)| {
+                let (start, len) = (u128::from(start), u128::from(len));
+                start * len + len * len.saturating_sub(1) / 2
+            })
+            .sum()
+    }
+
+    /// Moves the `len` blocks at `start`, owned by `owner`, to the already
+    /// free `target`. Returns whether they moved.
+    fn move_owner(
+        &mut self,
+        owner: Owner,
+        len: u64,
+        target: u64,
+        report: &mut CompactReport,
+    ) -> Result<bool> {
+        let done = match owner {
+            Owner::File { ino } => {
+                let slot = Self::slot_of(ino)?;
+                if !self.space.allocate_at(target, len) {
+                    return Ok(false);
+                }
+                self.move_file(slot, target, len)?;
+                report.files += 1;
+                return Ok(true);
+            }
+            Owner::Chunk { array, index } => {
+                let arrays = arrays_of(&mut self.links, &mut self.inodes);
+                arrays
+                    .into_iter()
+                    .nth(array)
+                    .is_some_and(|array| array.relocate_to(index, target, &mut self.space))
+            }
+            Owner::Table { array } => {
+                let arrays = arrays_of(&mut self.links, &mut self.inodes);
+                arrays
+                    .into_iter()
+                    .nth(array)
+                    .is_some_and(|array| array.relocate_table_to(target, &mut self.space))
+            }
+            Owner::Superblock | Owner::Journal | Owner::Free | Owner::Pending => false,
+        };
+        report.chunks += u64::from(done);
+        Ok(done)
+    }
+
+    /// Moves everything into the lowest free extent below it that fits, one
+    /// commit per pass, until nothing moves.
+    fn settle(&mut self, skip: Option<u64>, report: &mut CompactReport) -> Result<()> {
+        for _ in 0..256 {
+            let mut moved = false;
+            for (start, len, owner) in self.owners() {
+                if matches!(owner, Owner::File { ino } if Some(ino) == skip) {
+                    continue;
+                }
+                let target = self
+                    .space
+                    .free_extents()
+                    .take_while(|&(free, _)| free < start)
+                    .find(|&(_, free_len)| free_len >= len)
+                    .map(|(free, _)| free);
+                if let Some(target) = target {
+                    moved |= self.move_owner(owner, len, target, report)?;
+                }
+            }
+            if !moved {
+                break;
+            }
+            report.passes += 1;
+            self.dirty = true;
+            self.commit()?;
+        }
+        Ok(())
+    }
+
+    /// Unsticks the lowest gap that is smaller than the object right after
+    /// it by moving that object up into the last free extent, so the gap
+    /// grows by the object's place and the next settle fills it (copying
+    /// twice instead of overlapping, which a crash could tear). Returns
+    /// whether something moved.
+    fn bounce(&mut self, skip: Option<u64>, report: &mut CompactReport) -> Result<bool> {
+        let free: Vec<(u64, u64)> = self.space.free_extents().collect();
+        let Some((&(tail, tail_len), gaps)) = free.split_last() else {
+            return Ok(false);
+        };
+        let owners = self.owners();
+        for &(gap, gap_len) in gaps {
+            let Some(&(_, len, owner)) =
+                owners.iter().find(|&&(start, _, _)| start == gap + gap_len)
+            else {
+                continue;
+            };
+            if len > tail_len || matches!(owner, Owner::File { ino } if Some(ino) == skip) {
+                continue;
+            }
+            if self.move_owner(owner, len, tail, report)? {
+                report.passes += 1;
+                self.dirty = true;
+                self.commit()?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Moves every file, chunk and chunk table into the lowest free extent
-    /// that fits, until nothing moves, so all free space ends up in one
-    /// extent at the end of the volume.
+    /// that fits, until nothing moves, and moves objects stuck behind a gap
+    /// smaller than them out of the way, so all free space ends up in one
+    /// extent at the end of the volume. Without a journal every commit moves
+    /// the chunks it changes to fresh blocks, which leaves a few small gaps.
     pub fn compact(&mut self) -> Result<CompactReport> {
         self.compact_except(None)
     }
@@ -355,60 +468,18 @@ impl<D: BlockDevice> Fs<D> {
         }
         self.dirty = true;
         self.commit()?;
+        self.settle(skip, &mut report)?;
+        let mut height = self.free_height();
         for _ in 0..256 {
-            let mut moved = 0;
-            for (start, len, owner) in self.owners() {
-                if matches!(owner, Owner::File { ino } if Some(ino) == skip) {
-                    continue;
-                }
-                let Some(target) = self
-                    .space
-                    .free_extents()
-                    .take_while(|&(free, _)| free < start)
-                    .find(|&(_, free_len)| free_len >= len)
-                    .map(|(free, _)| free)
-                else {
-                    continue;
-                };
-                let done =
-                    match owner {
-                        Owner::File { ino } => {
-                            let slot = Self::slot_of(ino)?;
-                            if self.space.allocate_at(target, len) {
-                                self.move_file(slot, target, len)?;
-                                report.files += 1;
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        Owner::Chunk { array, index } => {
-                            let arrays = arrays_of(&mut self.links, &mut self.inodes);
-                            arrays.into_iter().nth(array).is_some_and(|array| {
-                                array.relocate_to(index, target, &mut self.space)
-                            })
-                        }
-                        Owner::Table { array } => {
-                            let arrays = arrays_of(&mut self.links, &mut self.inodes);
-                            arrays.into_iter().nth(array).is_some_and(|array| {
-                                array.relocate_table_to(target, &mut self.space)
-                            })
-                        }
-                        Owner::Superblock | Owner::Journal | Owner::Free | Owner::Pending => false,
-                    };
-                if done {
-                    moved += 1;
-                    if !matches!(owner, Owner::File { .. }) {
-                        report.chunks += 1;
-                    }
-                }
-            }
-            if moved == 0 {
+            if self.space.free_extents().nth(1).is_none() || !self.bounce(skip, &mut report)? {
                 break;
             }
-            report.passes += 1;
-            self.dirty = true;
-            self.commit()?;
+            self.settle(skip, &mut report)?;
+            let raised = self.free_height();
+            if raised <= height {
+                break;
+            }
+            height = raised;
         }
         report.largest_after = self.space.largest_free();
         Ok(report)
