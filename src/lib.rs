@@ -4,6 +4,7 @@ pub mod codec;
 pub mod config;
 pub mod device;
 pub mod error;
+pub mod fs;
 pub mod journal;
 pub mod links;
 pub mod sbt;

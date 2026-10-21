@@ -6,7 +6,7 @@
 
 use crate::chunked::ArrayDescriptor;
 use crate::codec::{crc32, get_i64, get_u32, get_u64, put_i64, put_u32, put_u64};
-use crate::config::{Layout, NameEncoding};
+use crate::config::{IndexMode, Layout, NameEncoding};
 use crate::error::{Error, Result};
 use crate::links::Header;
 use crate::varstore::CLASSES;
@@ -64,8 +64,23 @@ pub struct Superblock {
     pub label: String,
     /// Creation time (ns since the Unix epoch).
     pub created: i64,
+    /// Mode of the optional usage index stored on disk.
+    pub index_mode: IndexMode,
+    /// Bit string threshold of that index (`f64` bits).
+    pub index_threshold: u64,
+    /// Hysteresis of that index (`f64` bits).
+    pub index_hysteresis: u64,
     /// Array descriptors.
     pub arrays: [ArrayDescriptor; ARRAYS],
+}
+
+const fn index_code(mode: IndexMode) -> u8 {
+    match mode {
+        IndexMode::Off => 0,
+        IndexMode::Tree => 1,
+        IndexMode::Bitstring => 2,
+        IndexMode::Adaptive => 3,
+    }
 }
 
 impl Superblock {
@@ -94,6 +109,9 @@ impl Superblock {
         let len = label.len().min(32);
         b[136..136 + len].copy_from_slice(&label[..len]);
         put_i64(&mut b, 168, self.created);
+        b[176] = index_code(self.index_mode);
+        put_u64(&mut b, 184, self.index_threshold);
+        put_u64(&mut b, 192, self.index_hysteresis);
         for (index, array) in self.arrays.iter().enumerate() {
             let offset = ARRAYS_OFFSET + index * ArrayDescriptor::SIZE;
             array.write(&mut b[offset..offset + ArrayDescriptor::SIZE]);
@@ -133,6 +151,13 @@ impl Superblock {
             1 => NameEncoding::Packed,
             _ => return Err(Error::corrupt("unknown name encoding")),
         };
+        let index_mode = match b[176] {
+            0 => IndexMode::Off,
+            1 => IndexMode::Tree,
+            2 => IndexMode::Bitstring,
+            3 => IndexMode::Adaptive,
+            _ => return Err(Error::corrupt("unknown index mode")),
+        };
         let mut arrays = [ArrayDescriptor::default(); ARRAYS];
         for (index, array) in arrays.iter_mut().enumerate() {
             let offset = ARRAYS_OFFSET + index * ArrayDescriptor::SIZE;
@@ -156,6 +181,9 @@ impl Superblock {
             volume_id,
             label: String::from_utf8_lossy(&label_bytes[..end]).into_owned(),
             created: get_i64(b, 168),
+            index_mode,
+            index_threshold: get_u64(b, 184),
+            index_hysteresis: get_u64(b, 192),
             arrays,
         })
     }
@@ -191,6 +219,9 @@ mod tests {
             volume_id: [7; 16],
             label: "backup".into(),
             created: 1_700_000_000_000_000_000,
+            index_mode: IndexMode::Adaptive,
+            index_threshold: 0.25f64.to_bits(),
+            index_hysteresis: 0.5f64.to_bits(),
             arrays,
         };
         let mut bytes = sb.encode();

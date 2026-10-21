@@ -20,6 +20,9 @@ use crate::space::{Fit, Space};
 /// Block number of a chunk that has not been placed yet.
 pub const UNPLACED: u64 = u64::MAX;
 
+/// Zeros returned for out-of-range records (the largest record is 1 MiB).
+static ZEROS: [u8; 1 << 20] = [0; 1 << 20];
+
 /// Where a chunk table lives on disk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ArrayDescriptor {
@@ -180,11 +183,16 @@ impl ChunkedArray {
         )
     }
 
-    /// Record `index` (must be below [`capacity`](Self::capacity)).
+    /// Record `index`. Indices at or above [`capacity`](Self::capacity)
+    /// (only reachable through corrupt references) read as zeros.
     #[must_use]
     pub fn record(&self, index: u64) -> &[u8] {
         let (chunk, offset) = self.locate(index);
-        &self.chunks[chunk].data[offset..offset + self.record_size]
+        self.chunks
+            .get(chunk)
+            .map_or(&ZEROS[..self.record_size], |chunk| {
+                &chunk.data[offset..offset + self.record_size]
+            })
     }
 
     /// Mutable record `index`; marks its chunk dirty.
@@ -262,6 +270,51 @@ impl ChunkedArray {
         self.table_start = new_start;
         self.table_dirty = true;
         Ok(())
+    }
+
+    /// Moves chunk `index` to exactly `block` if that range is free.
+    pub fn relocate_to(&mut self, index: usize, block: u64, space: &mut Space) -> bool {
+        if !space.allocate_at(block, self.chunk_blocks) {
+            return false;
+        }
+        let chunk = &mut self.chunks[index];
+        if chunk.block != UNPLACED {
+            space.free(chunk.block, self.chunk_blocks);
+        }
+        chunk.block = block;
+        chunk.dirty = true;
+        self.table_dirty = true;
+        true
+    }
+
+    /// Moves the chunk table to exactly `start` if that range is free.
+    pub fn relocate_table_to(&mut self, start: u64, space: &mut Space) -> bool {
+        if self.table_blocks == 0 || !space.allocate_at(start, self.table_blocks) {
+            return false;
+        }
+        space.free(self.table_start, self.table_blocks);
+        self.table_start = start;
+        self.table_dirty = true;
+        true
+    }
+
+    /// Moves every chunk and the table overlapping `[start, start + len)`
+    /// out of that range. Returns whether anything moved.
+    pub fn evict(&mut self, start: u64, len: u64, space: &mut Space, fit: Fit) -> Result<bool> {
+        let overlaps = |block: u64, blocks: u64| block < start + len && block + blocks > start;
+        let mut moved = false;
+        for index in 0..self.chunks.len() {
+            let block = self.chunks[index].block;
+            if block != UNPLACED && overlaps(block, self.chunk_blocks) {
+                self.relocate(index, space, fit, Some((start, len)))?;
+                moved = true;
+            }
+        }
+        if self.table_blocks > 0 && overlaps(self.table_start, self.table_blocks) {
+            self.relocate_table(space, fit, Some((start, len)))?;
+            moved = true;
+        }
+        Ok(moved)
     }
 
     /// Places new chunks and grows the table if needed.
