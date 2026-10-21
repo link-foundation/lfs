@@ -94,6 +94,16 @@ fn mkfs_sets_the_root_owner() {
 }
 
 #[test]
+#[cfg(not(any(feature = "fuse", feature = "dokan")))]
+fn mount_explains_how_to_get_a_driver() {
+    let scratch = Scratch::new("nodriver");
+    let image = scratch.path("n.lfs");
+    ok(&["mkfs", s(&image), "--size", "4M"]);
+    let error = fails(&["mount", s(&image), s(&scratch.path("mnt"))]);
+    assert!(error.contains("--features fuse"), "{error}");
+}
+
+#[test]
 fn files_round_trip_between_the_host_and_a_volume() {
     let scratch = Scratch::new("copy");
     let image = scratch.path("v.img");

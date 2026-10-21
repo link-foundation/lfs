@@ -78,6 +78,13 @@ jobs:
           # The `stable` ref is what supplied the action's default toolchain;
           # once pinned to a hash the input has to be restated explicitly.
           toolchain: stable
+      # The `-fuse` macOS binary links against macFUSE's libfuse.
+      - name: Install macFUSE on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask macfuse
+          brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
       - name: Package desktop application
         env:
           DESKTOP_RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'dry-run' || needs.resolve.outputs.tag }}

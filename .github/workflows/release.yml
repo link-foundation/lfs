@@ -533,6 +533,43 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
+      # The mount tests must mount for real here instead of skipping.
+      - name: Install FUSE on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fuse3
+          echo "LFS_REQUIRE_FUSE=1" >> "$GITHUB_ENV"
+
+      # fuser links against macFUSE's libfuse on macOS. Runners cannot load
+      # its file system extension, so the mount itself is only built here.
+      - name: Install macFUSE on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask macfuse
+          brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+
+      # dokan-sys links against the installed Dokan library when
+      # DokanLibrary2_LibraryPath_x64 is set, so the build matches the driver.
+      - name: Install Dokan on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DOKAN_MSI_URL: https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/Dokan_x64.msi
+          DOKAN_MSI_SHA256: 69ff8cb37bfec3a75921c85ffd1c6370b50a9ec4ecef2cf3a009d488dcbf5465
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'Dokan_x64.msi'
+          Invoke-WebRequest -Uri $env:DOKAN_MSI_URL -OutFile $msi
+          $hash = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
+          if ($hash -ne $env:DOKAN_MSI_SHA256) { throw "Dokan_x64.msi has SHA-256 $hash" }
+          $install = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "msiexec failed with $($install.ExitCode)" }
+          $lib = [Environment]::GetEnvironmentVariable('DokanLibrary2_LibraryPath_x64', 'Machine')
+          if (-not $lib) { throw 'the Dokan installer did not set DokanLibrary2_LibraryPath_x64' }
+          "DokanLibrary2_LibraryPath_x64=$lib" >> $env:GITHUB_ENV
+          'LFS_REQUIRE_DOKAN=1' >> $env:GITHUB_ENV
+
       # cargo test includes doc tests with the same feature set.
       - name: Run tests
         shell: bash
@@ -649,6 +686,9 @@ jobs:
           # The `cargo-llvm-cov` ref is what supplied the tool name; once
           # pinned to a hash the input has to be restated explicitly.
           tool: cargo-llvm-cov
+
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3
 
       - name: Generate code coverage
         env:
