@@ -1,15 +1,15 @@
 [package]
-name = "example-sum-package-name"
+name = "links-fs"
 version = "0.20.2"
 edition = "2021"
-description = "A Rust package template for AI-driven development"
+description = "LFS: a links file system driver (Linux, macOS, Windows) with an embedded doublets links database, one shared journal and no fragmentation"
 readme = "README.md"
 license = "Unlicense"
-keywords = ["template", "rust", "ai-driven"]
-categories = ["development-tools"]
-repository = "https://github.com/link-foundation/rust-ai-driven-development-pipeline-template"
-documentation = "https://github.com/link-foundation/rust-ai-driven-development-pipeline-template"
-rust-version = "1.70"
+keywords = ["filesystem", "fuse", "doublets", "links", "dokan"]
+categories = ["filesystem", "database-implementations"]
+repository = "https://github.com/link-foundation/lfs"
+documentation = "https://docs.rs/links-fs"
+rust-version = "1.87"
 
 # Narrow allowlist of files shipped in the published `.crate` archive.
 # Keeping this list tight prevents docs, case studies, generated CI artifacts,
@@ -24,18 +24,36 @@ include = [
 ]
 
 [lib]
-name = "example_sum_package_name"
+name = "links_fs"
 path = "src/lib.rs"
 
 [[bin]]
-name = "example-sum-package-name"
+name = "lfs"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# Command line tool (`lfs`).
+cli = ["dep:clap"]
+# FUSE driver for Linux (pure Rust, needs `fusermount3` at runtime) and macOS (macFUSE).
+fuse = ["dep:fuser"]
+# Dokan driver for Windows (the Dokan 2 driver must be installed at runtime).
+dokan = ["dep:dokan", "dep:widestring"]
 
 [dependencies]
-lino-arguments = "0.3"
-clap = { version = "4.4", features = ["derive", "env"] }
+links-notation = { version = "0.27", default-features = false }
+clap = { version = "4.4", features = ["derive", "env"], optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
+fuser = { version = "0.18", default-features = false, optional = true }
+
+[target.'cfg(windows)'.dependencies]
+dokan = { version = "0.3.1", optional = true }
+widestring = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
+doublets = "0.8"
 regex = "1"
 serde_json = "1"
 walkdir = "2"
@@ -53,6 +71,11 @@ module_name_repetitions = "allow"
 too_many_lines = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Block/record arithmetic converts between u64 offsets and usize indices a lot.
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
 
 [[test]]
 name = "unit"
