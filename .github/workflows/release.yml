@@ -565,9 +565,20 @@ jobs:
           if ($hash -ne $env:DOKAN_MSI_SHA256) { throw "Dokan_x64.msi has SHA-256 $hash" }
           $install = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
           if ($install.ExitCode -notin 0, 3010) { throw "msiexec failed with $($install.ExitCode)" }
+          $driver = Join-Path $env:SystemRoot 'System32\drivers\dokan2.sys'
+          $dll = Join-Path $env:SystemRoot 'System32\dokan2.dll'
+          if (-not ((Test-Path $driver) -and (Test-Path $dll))) {
+            Get-ChildItem -Recurse "$env:ProgramFiles\Dokan" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            throw 'the Dokan installer did not install dokan2.sys and dokan2.dll'
+          }
+          # Link against the installed import library when the installer
+          # ships one; otherwise dokan-sys builds it from its bundled sources.
           $lib = [Environment]::GetEnvironmentVariable('DokanLibrary2_LibraryPath_x64', 'Machine')
-          if (-not $lib) { throw 'the Dokan installer did not set DokanLibrary2_LibraryPath_x64' }
-          "DokanLibrary2_LibraryPath_x64=$lib" >> $env:GITHUB_ENV
+          if (-not $lib) {
+            $found = Get-ChildItem -Recurse "$env:ProgramFiles\Dokan" -Filter dokan2.lib -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $lib = $found.DirectoryName }
+          }
+          if ($lib) { "DokanLibrary2_LibraryPath_x64=$lib" >> $env:GITHUB_ENV }
           'LFS_REQUIRE_DOKAN=1' >> $env:GITHUB_ENV
 
       # cargo test includes doc tests with the same feature set.

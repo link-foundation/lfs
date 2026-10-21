@@ -79,10 +79,39 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check that the dependency graph is enabled
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash scripts/check-dependency-graph.sh "$BASE_SHA" "$HEAD_SHA"
+
       - uses: actions/dependency-review-action@v5
+        if: steps.graph.outputs.enabled == 'true'
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
+
+  # Pull requests skip dependency review while the repository's dependency
+  # graph is disabled; main fails until an administrator enables it.
+  dependency-graph:
+    name: Dependency graph enabled
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - name: Require the dependency graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: bash scripts/check-dependency-graph.sh "$(git rev-parse HEAD~1)" "$(git rev-parse HEAD)" --require
 
   # Terminal status gate (issue #156): GitHub reports jobs killed by
   # timeout-minutes as cancelled. Observe every other job so a timeout on main
@@ -94,6 +123,7 @@ jobs:
       - cargo-audit
       - codeql
       - dependency-review
+      - dependency-graph
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5

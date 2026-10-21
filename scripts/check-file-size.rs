@@ -120,7 +120,9 @@ fn check_directory(cwd: &Path) -> CheckResult {
         violations: Vec::new(),
     };
 
+    // Sorted, so findings come out in the same order on every file system.
     for entry in WalkDir::new(cwd)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())

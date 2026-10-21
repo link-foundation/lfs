@@ -84,7 +84,6 @@ jobs:
         run: |
           brew install --cask macfuse
           brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
       - name: Package desktop application
         env:
           DESKTOP_RELEASE_TAG: ${{ github.event_name == 'pull_request' && 'dry-run' || needs.resolve.outputs.tag }}
@@ -92,6 +91,8 @@ jobs:
           CSC_FOR_PULL_REQUEST: 'true'
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
           MATRIX_LABEL: ${{ matrix.label }}
+          # Where macFUSE installs fuse.pc; unused elsewhere.
+          PKG_CONFIG_PATH: /usr/local/lib/pkgconfig
         run: bash scripts/package-desktop.sh "$MATRIX_LABEL" desktop-dist
       - name: Smoke test release assets
         env:

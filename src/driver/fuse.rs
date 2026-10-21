@@ -21,6 +21,13 @@ use std::time::{Duration, SystemTime};
 /// control files change by themselves and are never cached.
 const TTL: Duration = Duration::from_secs(1);
 
+/// The rename flag that refuses to replace the target: `RENAME_NOREPLACE`
+/// of Linux `renameat2`, `RENAME_EXCL` of macOS `renamex_np`.
+#[cfg(target_os = "macos")]
+const NO_REPLACE: u32 = 0x4;
+#[cfg(not(target_os = "macos"))]
+const NO_REPLACE: u32 = 0x1;
+
 struct Driver<D: BlockDevice> {
     volume: Shared<D>,
 }
@@ -243,8 +250,8 @@ impl<D: BlockDevice + Send + 'static> Filesystem for Driver<D> {
         flags: RenameFlags,
         reply: ReplyEmpty,
     ) {
-        let no_replace = flags.contains(RenameFlags::RENAME_NOREPLACE);
-        if !(flags - RenameFlags::RENAME_NOREPLACE).is_empty() {
+        let no_replace = flags.bits() & NO_REPLACE != 0;
+        if flags.bits() & !NO_REPLACE != 0 {
             reply.error(Errno::EINVAL);
             return;
         }
