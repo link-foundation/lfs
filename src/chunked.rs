@@ -318,6 +318,44 @@ impl ChunkedArray {
         }
     }
 
+    /// Number of dirty blocks that overwrite committed (non-fresh) blocks.
+    #[must_use]
+    pub fn live_dirty_blocks(&self, space: &Space) -> u64 {
+        let chunks = self
+            .chunks
+            .iter()
+            .filter(|chunk| chunk.dirty && chunk.block != UNPLACED && !space.is_fresh(chunk.block))
+            .count() as u64
+            * self.chunk_blocks;
+        let table =
+            if self.table_dirty && self.table_blocks > 0 && !space.is_fresh(self.table_start) {
+                self.table_blocks
+            } else {
+                0
+            };
+        chunks + table
+    }
+
+    /// Copy-on-write: moves every dirty chunk (and the table when
+    /// `with_table`) that sits on committed blocks to fresh blocks, so the
+    /// next commit does not overwrite live data in place.
+    pub fn cow_live(&mut self, space: &mut Space, fit: Fit, with_table: bool) -> Result<()> {
+        for index in 0..self.chunks.len() {
+            let chunk = &self.chunks[index];
+            if chunk.dirty && chunk.block != UNPLACED && !space.is_fresh(chunk.block) {
+                self.relocate(index, space, fit, None)?;
+            }
+        }
+        if with_table
+            && self.table_dirty
+            && self.table_blocks > 0
+            && !space.is_fresh(self.table_start)
+        {
+            self.relocate_table(space, fit, None)?;
+        }
+        Ok(())
+    }
+
     /// Whether anything must be written at the next commit.
     #[must_use]
     pub fn is_dirty(&self) -> bool {
