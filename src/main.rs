@@ -1,1 +1,284 @@
-fn main() {}
+//! `lfs`: create, inspect, change and mount LFS volumes.
+
+mod cli;
+
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+use std::process::ExitCode;
+
+/// LFS — a links file system with an embedded links database.
+///
+/// IMAGE is an image file or a raw device (`/dev/sdb1`, `\\.\E:`).
+#[derive(Parser, Debug)]
+#[command(name = "lfs", version, about, long_about = None)]
+pub struct Cli {
+    /// Runtime configuration for this run (`key=value`, repeatable); see
+    /// `lfs config --help` for the keys.
+    #[arg(long = "set", global = true, value_name = "KEY=VALUE")]
+    pub set: Vec<String>,
+    /// The command.
+    #[command(subcommand)]
+    pub command: Command,
+}
+
+/// Every `lfs` command.
+#[derive(Subcommand, Debug)]
+pub enum Command {
+    /// Creates a volume.
+    Mkfs {
+        /// Image file or device.
+        image: PathBuf,
+        /// Create (or truncate) an image file of this size (`64M`, `2G`).
+        #[arg(long, value_parser = cli::parse_size)]
+        size: Option<u64>,
+        /// Block size in bytes.
+        #[arg(long, default_value_t = 4096)]
+        block_size: u32,
+        /// Link layout: united, split or data-only.
+        #[arg(long, default_value = "united")]
+        layout: String,
+        /// Name encoding: chars (binary links notation strings) or packed.
+        #[arg(long, default_value = "chars")]
+        names: String,
+        /// Journal size in blocks (0: no journal; default: picked from the size).
+        #[arg(long)]
+        journal_blocks: Option<u64>,
+        /// Volume label.
+        #[arg(long, default_value = "lfs")]
+        label: String,
+        /// Overwrite an existing LFS volume.
+        #[arg(long)]
+        force: bool,
+    },
+    /// Shows volume statistics and the configuration.
+    Info {
+        /// Image file or device.
+        image: PathBuf,
+    },
+    /// Writes the disk space map as JSON (for the web visualizer).
+    Map {
+        /// Image file or device.
+        image: PathBuf,
+        /// Output file (default: standard output).
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+    },
+    /// Checks every invariant of a volume (exit code 1 if anything is wrong).
+    Fsck {
+        /// Image file or device.
+        image: PathBuf,
+    },
+    /// Lists a directory.
+    Ls {
+        /// Image file or device.
+        image: PathBuf,
+        /// Directory or file.
+        #[arg(default_value = "/")]
+        path: String,
+        /// Long format: kind, permissions, links, size, blocks, name.
+        #[arg(short, long)]
+        long: bool,
+        /// Recurse into subdirectories.
+        #[arg(short = 'R', long)]
+        recursive: bool,
+    },
+    /// Creates directories.
+    Mkdir {
+        /// Image file or device.
+        image: PathBuf,
+        /// Directories to create.
+        #[arg(required = true)]
+        paths: Vec<String>,
+        /// Create missing parents and accept existing directories.
+        #[arg(short, long)]
+        parents: bool,
+    },
+    /// Copies host files or directory trees into the volume.
+    Put {
+        /// Image file or device.
+        image: PathBuf,
+        /// Host file or directory.
+        source: PathBuf,
+        /// Destination path in the volume (an existing directory receives
+        /// the source under its own name).
+        #[arg(default_value = "/")]
+        dest: String,
+    },
+    /// Copies files or directory trees out of the volume.
+    Get {
+        /// Image file or device.
+        image: PathBuf,
+        /// Path in the volume.
+        source: String,
+        /// Host destination (an existing directory receives the source
+        /// under its own name).
+        #[arg(default_value = ".")]
+        dest: PathBuf,
+    },
+    /// Writes files to standard output.
+    Cat {
+        /// Image file or device.
+        image: PathBuf,
+        /// Files.
+        #[arg(required = true)]
+        paths: Vec<String>,
+    },
+    /// Writes standard input into a file (created if missing).
+    Write {
+        /// Image file or device.
+        image: PathBuf,
+        /// File.
+        path: String,
+    },
+    /// Removes files, symbolic links and (with -r) directory trees.
+    Rm {
+        /// Image file or device.
+        image: PathBuf,
+        /// Paths.
+        #[arg(required = true)]
+        paths: Vec<String>,
+        /// Remove directories and their contents.
+        #[arg(short, long)]
+        recursive: bool,
+    },
+    /// Renames or moves a file or directory.
+    Mv {
+        /// Image file or device.
+        image: PathBuf,
+        /// Existing path.
+        from: String,
+        /// New path (an existing directory receives the entry).
+        to: String,
+    },
+    /// Creates a hard link (or with -s a symbolic link).
+    Ln {
+        /// Image file or device.
+        image: PathBuf,
+        /// Existing file (or the symbolic link text).
+        target: String,
+        /// New name.
+        path: String,
+        /// Create a symbolic link.
+        #[arg(short, long)]
+        symbolic: bool,
+    },
+    /// Shows the configuration, or changes keys (`key=value`) persistently.
+    #[command(after_help = cli::config_help())]
+    Config {
+        /// Image file or device.
+        image: PathBuf,
+        /// `key=value` assignments.
+        assignments: Vec<String>,
+    },
+    /// Lists, queries and changes links of the embedded database.
+    Links {
+        /// Image file or device.
+        image: PathBuf,
+        /// What to do (default: list matching links).
+        #[command(subcommand)]
+        action: Option<LinkAction>,
+        /// List links with this source (`12` or `$7` for external 7).
+        #[arg(long, value_parser = cli::parse_link_ref)]
+        source: Option<u64>,
+        /// List links with this target.
+        #[arg(long, value_parser = cli::parse_link_ref)]
+        target: Option<u64>,
+    },
+    /// Exports the whole links store (binary links notation, doublets, `LiNo`).
+    ExportLinks {
+        /// Image file or device.
+        image: PathBuf,
+        /// Output file (`-` for standard output).
+        output: PathBuf,
+        /// Format: binary, doublets or lino (default: from the extension,
+        /// else binary).
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Imports links (any format) into the volume's database.
+    ImportLinks {
+        /// Image file or device.
+        image: PathBuf,
+        /// Input file (`-` for standard input).
+        input: PathBuf,
+        /// Format: binary, doublets or lino (default: detected).
+        #[arg(long)]
+        format: Option<String>,
+    },
+    /// Converts links files between formats (no volume needed).
+    Convert {
+        /// Input file.
+        input: PathBuf,
+        /// Output file.
+        output: PathBuf,
+        /// Input format (default: detected).
+        #[arg(long)]
+        from: Option<String>,
+        /// Output format (default: from the extension, else binary).
+        #[arg(long)]
+        to: Option<String>,
+    },
+    /// Defragments free space by moving files and link chunks together.
+    Compact {
+        /// Image file or device.
+        image: PathBuf,
+    },
+    /// Mounts a volume (FUSE on Linux and macOS, Dokan on Windows).
+    Mount {
+        /// Image file or device.
+        image: PathBuf,
+        /// Mount point (a directory, or a drive letter like `M:` on Windows).
+        mountpoint: PathBuf,
+        /// Mount read-only.
+        #[arg(long)]
+        read_only: bool,
+        /// Let other users access the mount (FUSE `allow_other`).
+        #[arg(long)]
+        allow_other: bool,
+    },
+}
+
+/// Link database actions.
+#[derive(Subcommand, Debug)]
+pub enum LinkAction {
+    /// Creates `source -> target` and prints it.
+    Create {
+        /// Source (`12` or `$7`).
+        #[arg(value_parser = cli::parse_link_ref)]
+        source: u64,
+        /// Target (`12` or `$7`).
+        #[arg(value_parser = cli::parse_link_ref)]
+        target: u64,
+    },
+    /// Creates a point (a link whose ends are itself) and prints it.
+    Point,
+    /// Changes both ends of a link.
+    Update {
+        /// Link index.
+        index: u64,
+        /// New source.
+        #[arg(value_parser = cli::parse_link_ref)]
+        source: u64,
+        /// New target.
+        #[arg(value_parser = cli::parse_link_ref)]
+        target: u64,
+    },
+    /// Deletes a link no other link refers to.
+    Delete {
+        /// Link index.
+        index: u64,
+    },
+}
+
+fn main() -> ExitCode {
+    let cli = Cli::parse();
+    match cli::run(cli) {
+        Ok(code) => code,
+        Err(error) => {
+            if !cli::is_broken_pipe(&error) {
+                eprintln!("lfs: {error}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}

@@ -1,0 +1,234 @@
+//! End-to-end tests of the `lfs` command line tool.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
+
+struct Scratch(PathBuf);
+
+impl Scratch {
+    fn new(name: &str) -> Self {
+        let dir = std::env::temp_dir().join(format!("lfs-cli-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
+    fn path(&self, name: &str) -> PathBuf {
+        self.0.join(name)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+fn lfs(args: &[&str], stdin: Option<&[u8]>) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lfs"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut input = child.stdin.take().unwrap();
+    input.write_all(stdin.unwrap_or_default()).unwrap();
+    drop(input);
+    child.wait_with_output().unwrap()
+}
+
+fn ok(args: &[&str]) -> String {
+    ok_with(args, None)
+}
+
+fn ok_with(args: &[&str], stdin: Option<&[u8]>) -> String {
+    let output = lfs(args, stdin);
+    assert!(
+        output.status.success(),
+        "lfs {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
+
+fn fails(args: &[&str]) -> String {
+    let output = lfs(args, None);
+    assert!(!output.status.success(), "lfs {args:?} succeeded");
+    String::from_utf8(output.stderr).unwrap()
+}
+
+fn s(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+#[test]
+fn mkfs_refuses_to_overwrite_a_volume_without_force() {
+    let scratch = Scratch::new("mkfs");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "8M", "--label", "first"]);
+    assert!(fails(&["mkfs", image, "--size", "8M"]).contains("--force"));
+    ok(&[
+        "mkfs", image, "--size", "8M", "--force", "--layout", "split",
+    ]);
+    let info = ok(&["info", image]);
+    assert!(info.contains("(layout: split)"), "{info}");
+    assert!(fails(&["mkfs", image, "--size", "8Q", "--force"]).contains("bad size"));
+}
+
+#[test]
+fn files_round_trip_between_the_host_and_a_volume() {
+    let scratch = Scratch::new("copy");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    let tree = scratch.path("tree");
+    std::fs::create_dir_all(tree.join("nested/deeper")).unwrap();
+    std::fs::write(tree.join("small.txt"), b"tiny").unwrap();
+    let big: Vec<u8> = (0..3_000_000u32).map(|i| (i % 251) as u8).collect();
+    std::fs::write(tree.join("nested/big.bin"), &big).unwrap();
+    std::fs::write(tree.join("nested/deeper/empty"), b"").unwrap();
+
+    ok(&["mkfs", image, "--size", "32M"]);
+    ok(&["mkdir", image, "-p", "/backup/today"]);
+    ok(&["put", image, s(&tree), "/backup/today"]);
+    ok_with(&["write", image, "/note"], Some(b"from stdin\n"));
+    assert_eq!(ok(&["cat", image, "/note"]), "from stdin\n");
+    ok(&["ln", image, "-s", "backup/today/tree/small.txt", "/small"]);
+    ok(&["ln", image, "/note", "/note2"]);
+    ok(&["mv", image, "/note2", "/backup"]);
+
+    let listing = ok(&["ls", image, "-lR", "/"]);
+    assert!(
+        listing.contains("small -> backup/today/tree/small.txt"),
+        "{listing}"
+    );
+    assert!(
+        listing.contains("/backup/today/tree/nested/deeper:"),
+        "{listing}"
+    );
+    assert!(ok(&["ls", image, "/backup"]).contains("note2"));
+    assert!(ok(&["fsck", image]).contains("clean"));
+
+    let out = scratch.path("out");
+    ok(&["get", image, "/backup/today/tree", s(&out)]);
+    assert_eq!(std::fs::read(out.join("small.txt")).unwrap(), b"tiny");
+    assert_eq!(std::fs::read(out.join("nested/big.bin")).unwrap(), big);
+    assert_eq!(std::fs::read(out.join("nested/deeper/empty")).unwrap(), b"");
+
+    ok(&["rm", image, "/small", "/note"]);
+    assert!(fails(&["rm", image, "/backup"]).contains("directory"));
+    ok(&["rm", image, "-r", "/backup"]);
+    assert_eq!(ok(&["ls", image]), ".lfs\n");
+    ok(&["compact", image]);
+    assert!(ok(&["fsck", image]).contains("clean"));
+    assert!(fails(&["cat", image, "/missing"]).contains("not found"));
+}
+
+#[test]
+fn configuration_changes_persist_and_overrides_do_not() {
+    let scratch = Scratch::new("config");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "8M"]);
+    let config = ok(&["config", image, "journal=off", "alloc=first-fit"]);
+    assert!(config.contains("(journal: off)"), "{config}");
+    let config = ok(&["config", image]);
+    assert!(config.contains("(alloc: first-fit)"), "{config}");
+    // `--set` applies to one run only.
+    assert!(fails(&["--set", "read-only=on", "mkdir", image, "/x"]).contains("read-only"));
+    ok(&["mkdir", image, "/x"]);
+    assert!(fails(&["config", image, "no-such-key=1"]).contains("no-such-key"));
+    assert!(ok(&["config", "--help"]).contains("protect-structure"));
+}
+
+#[test]
+fn the_links_database_is_usable_from_the_command_line() {
+    let scratch = Scratch::new("links");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "8M"]);
+    let point = ok(&["links", image, "point"]);
+    let index: u64 = point
+        .trim()
+        .trim_start_matches('(')
+        .split(':')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    let created = ok(&["links", image, "create", &index.to_string(), "$42"]);
+    assert!(created.ends_with(&format!(" {index} $42)\n")), "{created}");
+    let found = ok(&["links", image, "--target", "$42"]);
+    assert_eq!(found, created);
+    // The file system's own links are protected.
+    assert!(fails(&["links", image, "delete", "6"]).contains("file system"));
+
+    let lino = scratch.path("all.lino");
+    let binary = scratch.path("all.lnb");
+    let doublets = scratch.path("all.links");
+    ok(&["export-links", image, s(&lino)]);
+    ok(&["export-links", image, s(&binary), "--format", "binary"]);
+    ok(&["export-links", image, s(&doublets)]);
+    let text = std::fs::read_to_string(&lino).unwrap();
+    assert!(text.contains(&format!(" {index} $42)")), "{text}");
+    // Standard output gets a binary links notation archive.
+    let piped = lfs(&["export-links", image, "-"], None);
+    assert!(piped.status.success());
+    assert_eq!(piped.stdout, std::fs::read(&binary).unwrap());
+
+    let converted = scratch.path("converted.lino");
+    ok(&["convert", s(&doublets), s(&converted)]);
+    assert_eq!(std::fs::read_to_string(&converted).unwrap(), text);
+    ok(&["convert", s(&binary), s(&converted)]);
+    assert_eq!(std::fs::read_to_string(&converted).unwrap(), text);
+
+    let other = scratch.path("other.img");
+    let other = s(&other);
+    ok(&["mkfs", other, "--size", "8M"]);
+    let output = lfs(&["import-links", other, s(&binary)], None);
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("imported"));
+    assert!(ok(&["fsck", other]).contains("clean"));
+    assert_eq!(ok(&["ls", other]), ".lfs\n");
+    ok_with(&["import-links", other, "-"], Some(text.as_bytes()));
+    assert!(ok(&["fsck", other]).contains("clean"));
+}
+
+#[test]
+fn the_space_map_is_json() {
+    let scratch = Scratch::new("map");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "8M"]);
+    ok_with(&["write", image, "/f"], Some(&[7; 10_000]));
+    let map: serde_json::Value = serde_json::from_str(&ok(&["map", image])).unwrap();
+    assert_eq!(map["format"], "lfs-map");
+    assert!(map["extents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|extent| extent["kind"] == "file"));
+}
+
+#[test]
+fn a_closed_pipe_is_not_an_error_message() {
+    let scratch = Scratch::new("pipe");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "8M"]);
+    ok_with(&["write", image, "/big"], Some(&vec![b'x'; 4 << 20]));
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lfs"))
+        .args(["cat", image, "/big"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("lfs:"),
+        "{output:?}"
+    );
+}
