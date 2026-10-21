@@ -20,7 +20,7 @@ use crate::sbt::{self, NodesRead};
 use crate::space::Space;
 use links_notation::binary::packet::{decode_external, encode_external};
 use records::{header, Records, Role, Tree, TreeId, TreeMut};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use usage::UsageIndex;
 
 /// The raw cell of external zero.
@@ -422,6 +422,13 @@ impl Links {
                 self.header.allocated
             }
         };
+        self.reset_slot(index);
+        index
+    }
+
+    /// Clears the ends and the tree cells of a slot (not the roots of its
+    /// per-link trees, which belong to its users).
+    fn reset_slot(&mut self, index: u64) {
         self.records.ensure(index);
         self.records.set_link(index, 0, 0);
         if self.records.layout.has_embedded_index() {
@@ -431,7 +438,69 @@ impl Links {
                 }
             }
         }
-        index
+    }
+
+    /// Creates links at exact addresses, as importing a store does.
+    ///
+    /// Every address must be free, every `(source, target)` pair new, and
+    /// every internal reference must name a live link or one of `links`, so
+    /// references may point forward. Nothing changes if a check fails.
+    /// Addresses between the old top and the new links become free slots.
+    pub fn place_all(&mut self, links: &[Link]) -> Result<()> {
+        let mut addresses = BTreeSet::new();
+        let mut pairs = HashSet::with_capacity(links.len());
+        for link in links {
+            if !is_internal(link.index) {
+                return Err(Error::invalid(format!("bad link address {}", link.index)));
+            }
+            if self.exists(link.index) || !addresses.insert(link.index) {
+                return Err(Error::invalid(format!("address {} is taken", link.index)));
+            }
+            if link.source == 0 && link.target == 0 {
+                return Err(Error::invalid("a link needs a non-null end"));
+            }
+            if !pairs.insert((link.source, link.target))
+                || self.search(link.source, link.target).is_some()
+            {
+                return Err(Error::Exists);
+            }
+        }
+        for link in links {
+            for end in [link.source, link.target] {
+                if is_internal(end) && !self.exists(end) && !addresses.contains(&end) {
+                    return Err(Error::invalid(format!(
+                        "link {} refers to missing link {end}",
+                        link.index
+                    )));
+                }
+            }
+        }
+        let Some(&top) = addresses.last() else {
+            return Ok(());
+        };
+        while self.header.allocated < top {
+            self.header.allocated += 1;
+            let index = self.header.allocated;
+            self.reset_slot(index);
+            if self.records.layout == Layout::United {
+                self.free_list_attach_first(index);
+            } else {
+                self.free_set.insert(index);
+                self.header.free += 1;
+            }
+        }
+        for link in links {
+            if self.records.layout == Layout::United {
+                self.free_list_detach(link.index);
+            } else {
+                self.free_set.remove(&link.index);
+                self.header.free -= 1;
+            }
+            self.reset_slot(link.index);
+            self.attach(link.index, link.source, link.target)?;
+        }
+        self.sync_header();
+        Ok(())
     }
 
     fn free_slot(&mut self, index: u64) {

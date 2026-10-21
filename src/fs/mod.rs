@@ -34,6 +34,7 @@ mod control;
 mod dir;
 mod file;
 pub mod inode;
+pub mod interchange;
 pub mod map;
 pub mod names;
 #[cfg(test)]

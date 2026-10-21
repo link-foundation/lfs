@@ -259,10 +259,11 @@ fn symlinks() {
         .unwrap();
     assert_eq!(link.kind, FileKind::Symlink);
     assert_eq!(fs.readlink(link.ino).unwrap(), "../some/where");
-    let fs2 = reopen(fs);
-    let mut fs = fs2;
+    let mut fs = reopen(fs);
     let ino = fs.resolve("/s").unwrap();
     assert_eq!(fs.readlink(ino).unwrap(), "../some/where");
+    // The target lives in links, so the link has a size but no blocks.
+    assert_clean(&fs);
     fs.unlink(ROOT_INO, "s").unwrap();
     assert_clean(&fs);
 }

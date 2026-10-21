@@ -15,7 +15,6 @@ use super::inode::FileKind;
 use super::{now, Attr, Fs, ROOT_INO};
 use crate::device::BlockDevice;
 use crate::error::{Error, Result};
-use crate::links::format_ref;
 use std::fmt::Write;
 
 /// Inode number of the `.lfs` directory.
@@ -103,18 +102,7 @@ impl<D: BlockDevice> Fs<D> {
     /// Every link as `(index: source target)`, one per line.
     #[must_use]
     pub fn links_text(&self) -> String {
-        let mut out = String::new();
-        self.links.each_link(&mut |link| {
-            let _ = writeln!(
-                out,
-                "({}: {} {})",
-                link.index,
-                format_ref(link.source),
-                format_ref(link.target)
-            );
-            true
-        });
-        out
+        crate::links::packet::write_lino(&self.links.all())
     }
 
     /// Volume statistics as links notation.

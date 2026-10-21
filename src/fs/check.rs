@@ -89,7 +89,8 @@ impl<D: BlockDevice> Fs<D> {
                 problems.push(format!("inode {ino} has an unknown type"));
                 continue;
             };
-            if inode.size > inode.blocks * block_size {
+            // Symbolic link targets live in links, not in blocks.
+            if kind != FileKind::Symlink && inode.size > inode.blocks * block_size {
                 problems.push(format!(
                     "inode {ino} is {} bytes but has {} blocks",
                     inode.size, inode.blocks
