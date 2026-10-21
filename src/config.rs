@@ -17,6 +17,7 @@
 use crate::error::{Error, Result};
 use crate::space::Fit;
 use links_notation::LiNo;
+use std::fmt::Write as _;
 
 /// How links are laid out on disk.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +76,9 @@ impl Layout {
             "united" | "unified" => Ok(Self::United),
             "split" => Ok(Self::Split),
             "data-only" | "none" => Ok(Self::DataOnly),
-            _ => Err(Error::invalid(format!("unknown layout {text:?} (united, split, data-only)"))),
+            _ => Err(Error::invalid(format!(
+                "unknown layout {text:?} (united, split, data-only)"
+            ))),
         }
     }
 }
@@ -106,7 +109,9 @@ impl NameEncoding {
         match text {
             "chars" | "lino" => Ok(Self::Chars),
             "packed" => Ok(Self::Packed),
-            _ => Err(Error::invalid(format!("unknown name encoding {text:?} (chars, packed)"))),
+            _ => Err(Error::invalid(format!(
+                "unknown name encoding {text:?} (chars, packed)"
+            ))),
         }
     }
 }
@@ -182,6 +187,7 @@ impl Threshold {
 
 /// Settings that can change at any time.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct RuntimeConfig {
     /// Journal mode.
     pub journal: JournalMode,
@@ -232,7 +238,9 @@ fn parse_bool(key: &str, value: &str) -> Result<bool> {
     match value {
         "on" | "true" | "yes" | "1" => Ok(true),
         "off" | "false" | "no" | "0" => Ok(false),
-        _ => Err(Error::invalid(format!("{key}: expected on/off, got {value:?}"))),
+        _ => Err(Error::invalid(format!(
+            "{key}: expected on/off, got {value:?}"
+        ))),
     }
 }
 
@@ -242,7 +250,7 @@ fn parse_number<T: std::str::FromStr>(key: &str, value: &str) -> Result<T> {
         .map_err(|_| Error::invalid(format!("{key}: expected a number, got {value:?}")))
 }
 
-fn on_off(value: bool) -> &'static str {
+const fn on_off(value: bool) -> &'static str {
     if value {
         "on"
     } else {
@@ -253,13 +261,25 @@ fn on_off(value: bool) -> &'static str {
 /// Every runtime key, for help texts.
 pub const RUNTIME_KEYS: &[(&str, &str)] = &[
     ("journal", "off | metadata | full"),
-    ("commit-every", "operations between automatic commits (0 = only on sync)"),
+    (
+        "commit-every",
+        "operations between automatic commits (0 = only on sync)",
+    ),
     ("alloc", "best-fit | first-fit (file extents)"),
-    ("gap-fill", "on | off (put link chunks into the smallest gaps)"),
+    (
+        "gap-fill",
+        "on | off (put link chunks into the smallest gaps)",
+    ),
     ("growth-percent", "extra room reserved when a file grows"),
-    ("index", "off | tree | bitstring | adaptive (variable-size index)"),
+    (
+        "index",
+        "off | tree | bitstring | adaptive (variable-size index)",
+    ),
     ("bitstring-threshold", "auto | <percent of all links>"),
-    ("hysteresis-percent", "fall back to a tree below this % of the threshold"),
+    (
+        "hysteresis-percent",
+        "fall back to a tree below this % of the threshold",
+    ),
     ("auto-compact", "on | off"),
     ("atime", "on | off"),
     ("read-only", "on | off"),
@@ -320,7 +340,11 @@ impl RuntimeConfig {
             "atime" => self.atime = parse_bool(key, value)?,
             "read-only" => self.read_only = parse_bool(key, value)?,
             "protect-structure" => self.protect_structure = parse_bool(key, value)?,
-            other => return Err(Error::invalid(format!("unknown configuration key {other:?}"))),
+            other => {
+                return Err(Error::invalid(format!(
+                    "unknown configuration key {other:?}"
+                )))
+            }
         }
         Ok(())
     }
@@ -409,7 +433,10 @@ impl RuntimeConfig {
             ("auto-compact", on_off(self.auto_compact).to_string()),
             ("atime", on_off(self.atime).to_string()),
             ("read-only", on_off(self.read_only).to_string()),
-            ("protect-structure", on_off(self.protect_structure).to_string()),
+            (
+                "protect-structure",
+                on_off(self.protect_structure).to_string(),
+            ),
         ]
     }
 
@@ -418,8 +445,10 @@ impl RuntimeConfig {
     pub fn to_lino(&self) -> String {
         self.pairs()
             .into_iter()
-            .map(|(key, value)| format!("({key}: {value})\n"))
-            .collect()
+            .fold(String::new(), |mut out, (key, value)| {
+                let _ = writeln!(out, "({key}: {value})");
+                out
+            })
     }
 
     /// Placement policy for link chunks.
@@ -462,7 +491,10 @@ mod tests {
         assert_eq!(config.index, IndexMode::Tree);
         assert!(!config.gap_fill);
         config.set_assignment("bitstring-threshold=2.5%").unwrap();
-        assert_eq!(config.bitstring_threshold, Threshold::PartsPerMillion(25_000));
+        assert_eq!(
+            config.bitstring_threshold,
+            Threshold::PartsPerMillion(25_000)
+        );
         assert!(config.set("journal", "sometimes").is_err());
         assert!(config.set("colour", "blue").is_err());
     }

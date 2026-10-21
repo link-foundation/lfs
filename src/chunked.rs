@@ -127,15 +127,19 @@ impl ChunkedArray {
     /// Blocks needed for chunks that have not been placed yet.
     #[must_use]
     pub fn unplaced_blocks(&self) -> u64 {
-        self.chunks.iter().filter(|chunk| chunk.block == UNPLACED).count() as u64 * self.chunk_blocks
+        self.chunks
+            .iter()
+            .filter(|chunk| chunk.block == UNPLACED)
+            .count() as u64
+            * self.chunk_blocks
             + self.table_growth_blocks()
     }
 
-    fn table_needed_blocks(&self) -> u64 {
+    const fn table_needed_blocks(&self) -> u64 {
         ((self.chunks.len() * 8).div_ceil(self.block_size)) as u64
     }
 
-    fn table_growth_blocks(&self) -> u64 {
+    const fn table_growth_blocks(&self) -> u64 {
         let needed = self.table_needed_blocks();
         if needed > self.table_blocks {
             needed.next_power_of_two()
@@ -168,9 +172,12 @@ impl ChunkedArray {
         }
     }
 
-    fn locate(&self, index: u64) -> (usize, usize) {
+    const fn locate(&self, index: u64) -> (usize, usize) {
         let index = index as usize;
-        (index / self.per_chunk, (index % self.per_chunk) * self.record_size)
+        (
+            index / self.per_chunk,
+            (index % self.per_chunk) * self.record_size,
+        )
     }
 
     /// Record `index` (must be below [`capacity`](Self::capacity)).
@@ -218,7 +225,13 @@ impl ChunkedArray {
 
     /// Moves chunk `index` to a new location chosen by the allocator,
     /// avoiding `avoid`. The old blocks are released (pending until commit).
-    pub fn relocate(&mut self, index: usize, space: &mut Space, fit: Fit, avoid: Option<(u64, u64)>) -> Result<()> {
+    pub fn relocate(
+        &mut self,
+        index: usize,
+        space: &mut Space,
+        fit: Fit,
+        avoid: Option<(u64, u64)>,
+    ) -> Result<()> {
         let new_block = space
             .allocate_avoiding(self.chunk_blocks, fit, avoid)
             .ok_or(Error::NoSpace)?;
@@ -233,7 +246,12 @@ impl ChunkedArray {
     }
 
     /// Moves the chunk table to a new extent, releasing the old one.
-    pub fn relocate_table(&mut self, space: &mut Space, fit: Fit, avoid: Option<(u64, u64)>) -> Result<()> {
+    pub fn relocate_table(
+        &mut self,
+        space: &mut Space,
+        fit: Fit,
+        avoid: Option<(u64, u64)>,
+    ) -> Result<()> {
         if self.table_blocks == 0 {
             return Ok(());
         }
@@ -250,7 +268,9 @@ impl ChunkedArray {
     pub fn place(&mut self, space: &mut Space, fit: Fit) -> Result<()> {
         for index in 0..self.chunks.len() {
             if self.chunks[index].block == UNPLACED {
-                let block = space.allocate(self.chunk_blocks, fit).ok_or(Error::NoSpace)?;
+                let block = space
+                    .allocate(self.chunk_blocks, fit)
+                    .ok_or(Error::NoSpace)?;
                 self.chunks[index].block = block;
                 self.table_dirty = true;
             }
@@ -353,7 +373,9 @@ impl ChunkedArray {
         for index in 0..descriptor.chunks as usize {
             let block = get_u64(&table, index * 8);
             if !space.mark_used(block, array.chunk_blocks) {
-                return Err(Error::corrupt(format!("chunk at block {block} overlaps another owner")));
+                return Err(Error::corrupt(format!(
+                    "chunk at block {block} overlaps another owner"
+                )));
             }
             let mut data = vec![0u8; array.chunk_blocks as usize * block_size];
             device.read_at(block * block_size as u64, &mut data)?;
@@ -393,7 +415,9 @@ mod tests {
         }
         let mut space2 = Space::new(64);
         assert!(space2.mark_used(0, 1));
-        let loaded = ChunkedArray::load(&mut device, array.descriptor(), 64, block_size, &mut space2).unwrap();
+        let loaded =
+            ChunkedArray::load(&mut device, array.descriptor(), 64, block_size, &mut space2)
+                .unwrap();
         assert_eq!(loaded.get(17, 8), 42);
         assert_eq!(space2.free_blocks(), space.free_blocks());
     }
@@ -412,7 +436,9 @@ mod tests {
         array.ensure_capacity(1);
         array.place(&mut space, Fit::First).unwrap();
         let first = array.chunk_blocks_iter().next().unwrap();
-        array.relocate(0, &mut space, Fit::First, Some((first, 4))).unwrap();
+        array
+            .relocate(0, &mut space, Fit::First, Some((first, 4)))
+            .unwrap();
         let moved = array.chunk_blocks_iter().next().unwrap();
         assert!(moved >= first + 4);
         assert_eq!(array.chunk_at(moved), Some(0));

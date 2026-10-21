@@ -35,11 +35,11 @@ pub struct Space {
     free_blocks: u64,
 }
 
-fn bit_get(bits: &[u64], index: u64) -> bool {
+const fn bit_get(bits: &[u64], index: u64) -> bool {
     bits[(index / 64) as usize] & (1 << (index % 64)) != 0
 }
 
-fn bit_set(bits: &mut [u64], index: u64, value: bool) {
+const fn bit_set(bits: &mut [u64], index: u64, value: bool) {
     let word = &mut bits[(index / 64) as usize];
     if value {
         *word |= 1 << (index % 64);
@@ -186,7 +186,12 @@ impl Space {
     }
 
     /// Allocates `len` contiguous blocks outside `avoid` (`(start, len)`).
-    pub fn allocate_avoiding(&mut self, len: u64, fit: Fit, avoid: Option<(u64, u64)>) -> Option<u64> {
+    pub fn allocate_avoiding(
+        &mut self,
+        len: u64,
+        fit: Fit,
+        avoid: Option<(u64, u64)>,
+    ) -> Option<u64> {
         if len == 0 {
             return Some(0);
         }
@@ -330,7 +335,13 @@ mod tests {
         assert!(space.allocate_at(5, 5));
         assert!(!space.allocate_at(8, 5));
         assert!(!space.is_free(4, 2));
-        assert_eq!(space.allocate_avoiding(3, Fit::First, Some((0, 4))), Some(10));
-        assert_eq!(space.allocate_avoiding(4, Fit::First, Some((13, 2))), Some(0));
+        assert_eq!(
+            space.allocate_avoiding(3, Fit::First, Some((0, 4))),
+            Some(10)
+        );
+        assert_eq!(
+            space.allocate_avoiding(4, Fit::First, Some((13, 2))),
+            Some(0)
+        );
     }
 }

@@ -50,7 +50,7 @@ impl Error {
     /// POSIX errno for this error (Linux numbering; macOS differs only for
     /// `ENOTEMPTY`, which is handled here too).
     #[must_use]
-    pub fn errno(&self) -> i32 {
+    pub const fn errno(&self) -> i32 {
         match self {
             Self::Io(_) | Self::Corrupt(_) => 5,
             Self::NotFound => 2,

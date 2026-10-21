@@ -9,25 +9,29 @@
 /// Ordering key of a node: `(primary, secondary, tie-break)`.
 pub type Key = (u64, u64, u64);
 
-/// Node storage for a tree.
-pub trait Nodes {
+/// Read access to the nodes of a tree.
+pub trait NodesRead {
     /// Left child of `node`.
     fn left(&self, node: u64) -> u64;
     /// Right child of `node`.
     fn right(&self, node: u64) -> u64;
     /// Number of nodes in the subtree rooted at `node`.
     fn size(&self, node: u64) -> u64;
+    /// Ordering key of `node`.
+    fn key(&self, node: u64) -> Key;
+}
+
+/// Mutable node storage for a tree.
+pub trait Nodes: NodesRead {
     /// Sets the left child.
     fn set_left(&mut self, node: u64, value: u64);
     /// Sets the right child.
     fn set_right(&mut self, node: u64, value: u64);
     /// Sets the subtree size.
     fn set_size(&mut self, node: u64, value: u64);
-    /// Ordering key of `node`.
-    fn key(&self, node: u64) -> Key;
 }
 
-fn left<T: Nodes + ?Sized>(tree: &T, node: u64) -> u64 {
+fn left<T: NodesRead + ?Sized>(tree: &T, node: u64) -> u64 {
     if node == 0 {
         0
     } else {
@@ -35,7 +39,7 @@ fn left<T: Nodes + ?Sized>(tree: &T, node: u64) -> u64 {
     }
 }
 
-fn right<T: Nodes + ?Sized>(tree: &T, node: u64) -> u64 {
+fn right<T: NodesRead + ?Sized>(tree: &T, node: u64) -> u64 {
     if node == 0 {
         0
     } else {
@@ -44,7 +48,7 @@ fn right<T: Nodes + ?Sized>(tree: &T, node: u64) -> u64 {
 }
 
 /// Size of a subtree (0 for the null node).
-pub fn size<T: Nodes + ?Sized>(tree: &T, node: u64) -> u64 {
+pub fn size<T: NodesRead + ?Sized>(tree: &T, node: u64) -> u64 {
     if node == 0 {
         0
     } else {
@@ -179,7 +183,12 @@ pub fn remove<T: Nodes + ?Sized>(tree: &mut T, root: u64, key: Key) -> u64 {
 }
 
 /// Finds a node whose key's first two parts equal `(primary, secondary)`.
-pub fn find<T: Nodes + ?Sized>(tree: &T, root: u64, primary: u64, secondary: u64) -> Option<u64> {
+pub fn find<T: NodesRead + ?Sized>(
+    tree: &T,
+    root: u64,
+    primary: u64,
+    secondary: u64,
+) -> Option<u64> {
     let mut node = root;
     while node != 0 {
         let (p, s, _) = tree.key(node);
@@ -193,7 +202,7 @@ pub fn find<T: Nodes + ?Sized>(tree: &T, root: u64, primary: u64, secondary: u64
 }
 
 /// Number of keys strictly below `key`.
-pub fn count_less<T: Nodes + ?Sized>(tree: &T, root: u64, key: Key) -> u64 {
+pub fn count_less<T: NodesRead + ?Sized>(tree: &T, root: u64, key: Key) -> u64 {
     let mut node = root;
     let mut count = 0;
     while node != 0 {
@@ -208,17 +217,18 @@ pub fn count_less<T: Nodes + ?Sized>(tree: &T, root: u64, key: Key) -> u64 {
 }
 
 /// Number of keys whose primary part equals `primary`.
-pub fn count_primary<T: Nodes + ?Sized>(tree: &T, root: u64, primary: u64) -> u64 {
+pub fn count_primary<T: NodesRead + ?Sized>(tree: &T, root: u64, primary: u64) -> u64 {
     let below = count_less(tree, root, (primary, 0, 0));
-    let up_to = primary
-        .checked_add(1)
-        .map_or_else(|| size(tree, root), |next| count_less(tree, root, (next, 0, 0)));
+    let up_to = primary.checked_add(1).map_or_else(
+        || size(tree, root),
+        |next| count_less(tree, root, (next, 0, 0)),
+    );
     up_to - below
 }
 
 /// Visits nodes with `low <= key <= high` in order until `visit` returns
 /// `false`. Returns `false` if the visit was stopped.
-pub fn each_in_range<T: Nodes + ?Sized>(
+pub fn each_in_range<T: NodesRead + ?Sized>(
     tree: &T,
     node: u64,
     low: Key,
@@ -242,7 +252,12 @@ pub fn each_in_range<T: Nodes + ?Sized>(
 }
 
 /// Checks ordering and size invariants; returns the subtree size.
-pub fn check<T: Nodes + ?Sized>(tree: &T, node: u64, low: Option<Key>, high: Option<Key>) -> Result<u64, String> {
+pub fn check<T: NodesRead + ?Sized>(
+    tree: &T,
+    node: u64,
+    low: Option<Key>,
+    high: Option<Key>,
+) -> Result<u64, String> {
     if node == 0 {
         return Ok(0);
     }
@@ -253,7 +268,11 @@ pub fn check<T: Nodes + ?Sized>(tree: &T, node: u64, low: Option<Key>, high: Opt
     let l = check(tree, tree.left(node), low, Some(key))?;
     let r = check(tree, tree.right(node), Some(key), high)?;
     if tree.size(node) != l + r + 1 {
-        return Err(format!("node {node} has size {} but {} nodes", tree.size(node), l + r + 1));
+        return Err(format!(
+            "node {node} has size {} but {} nodes",
+            tree.size(node),
+            l + r + 1
+        ));
     }
     Ok(l + r + 1)
 }
@@ -267,7 +286,7 @@ mod tests {
         nodes: Vec<[u64; 4]>,
     }
 
-    impl Nodes for Vec3 {
+    impl NodesRead for Vec3 {
         fn left(&self, node: u64) -> u64 {
             self.nodes[node as usize][0]
         }
@@ -277,6 +296,12 @@ mod tests {
         fn size(&self, node: u64) -> u64 {
             self.nodes[node as usize][2]
         }
+        fn key(&self, node: u64) -> Key {
+            (self.nodes[node as usize][3], 0, node)
+        }
+    }
+
+    impl Nodes for Vec3 {
         fn set_left(&mut self, node: u64, value: u64) {
             self.nodes[node as usize][0] = value;
         }
@@ -285,9 +310,6 @@ mod tests {
         }
         fn set_size(&mut self, node: u64, value: u64) {
             self.nodes[node as usize][2] = value;
-        }
-        fn key(&self, node: u64) -> Key {
-            (self.nodes[node as usize][3], 0, node)
         }
     }
 
@@ -312,14 +334,16 @@ mod tests {
         }
         assert_eq!(check(&tree, root, None, None), Ok(2000));
         assert!(depth(&tree, root) <= 2 * 11 + 2);
-        let in_bucket = (1..=2000).filter(|&n| tree.nodes[n as usize][3] == 7).count() as u64;
+        let in_bucket = (1..=2000)
+            .filter(|&n| tree.nodes[n as usize][3] == 7)
+            .count() as u64;
         assert_eq!(count_primary(&tree, root, 7), in_bucket);
-        let mut seen = 0;
+        let mut visited = 0;
         each_in_range(&tree, root, (7, 0, 0), (7, u64::MAX, u64::MAX), &mut |_| {
-            seen += 1;
+            visited += 1;
             true
         });
-        assert_eq!(seen, in_bucket);
+        assert_eq!(visited, in_bucket);
         for node in (1..=2000u64).step_by(3) {
             let key = tree.key(node);
             root = remove(&mut tree, root, key);
