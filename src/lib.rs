@@ -3,6 +3,7 @@ pub mod chunked;
 pub mod codec;
 pub mod config;
 pub mod device;
+pub mod driver;
 pub mod error;
 pub mod fs;
 pub mod journal;

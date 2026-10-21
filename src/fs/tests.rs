@@ -86,6 +86,21 @@ fn format_creates_an_empty_root() {
 }
 
 #[test]
+fn format_sets_the_root_owner() {
+    let format = FormatOptions {
+        root_owner: (1000, 100),
+        ..FormatOptions::default()
+    };
+    let fs = reopen(Fs::format(MemDevice::new(4 * MIB), &format, "o").unwrap());
+    let root = fs.getattr(ROOT_INO).unwrap();
+    assert_eq!((root.uid, root.gid), (1000, 100));
+    let config = fs
+        .getattr(fs.lookup(CONTROL_DIR_INO, "config").unwrap().ino)
+        .unwrap();
+    assert_eq!((config.uid, config.gid), (1000, 100));
+}
+
+#[test]
 fn rejects_bad_geometry() {
     let small = Fs::format(MemDevice::new(4096 * 4), &FormatOptions::default(), "x");
     assert!(small.is_err());
@@ -102,7 +117,7 @@ fn files_round_trip_in_every_layout() {
                 block_size: 1024,
                 layout,
                 name_encoding: encoding,
-                journal_blocks: None,
+                ..FormatOptions::default()
             };
             let mut fs = Fs::format(MemDevice::new(4 * MIB), &format, "l").unwrap();
             let docs = fs

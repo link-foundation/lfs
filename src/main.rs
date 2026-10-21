@@ -46,6 +46,10 @@ pub enum Command {
         /// Volume label.
         #[arg(long, default_value = "lfs")]
         label: String,
+        /// Owner of the root directory (`UID:GID`; default: the owner of the
+        /// image file, so whoever creates an image can write to its mount).
+        #[arg(long, value_parser = cli::parse_owner)]
+        root_owner: Option<(u32, u32)>,
         /// Overwrite an existing LFS volume.
         #[arg(long)]
         force: bool,

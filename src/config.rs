@@ -127,6 +127,8 @@ pub struct FormatOptions {
     pub name_encoding: NameEncoding,
     /// Journal size in blocks (`None` picks a size from the device size).
     pub journal_blocks: Option<u64>,
+    /// Owner (`uid`, `gid`) of the root directory.
+    pub root_owner: (u32, u32),
 }
 
 impl Default for FormatOptions {
@@ -136,6 +138,7 @@ impl Default for FormatOptions {
             layout: Layout::United,
             name_encoding: NameEncoding::Chars,
             journal_blocks: None,
+            root_owner: (0, 0),
         }
     }
 }

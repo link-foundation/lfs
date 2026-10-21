@@ -37,13 +37,15 @@ default = ["cli"]
 # Command line tool (`lfs`).
 cli = ["dep:clap"]
 # FUSE driver for Linux (pure Rust, needs `fusermount3` at runtime) and macOS (macFUSE).
-fuse = ["dep:fuser"]
+fuse = ["dep:fuser", "dep:ctrlc"]
 # Dokan driver for Windows (the Dokan 2 driver must be installed at runtime).
-dokan = ["dep:dokan", "dep:widestring"]
+dokan = ["dep:dokan", "dep:widestring", "dep:ctrlc"]
 
 [dependencies]
 links-notation = { version = "0.27", default-features = false }
 clap = { version = "4.4", features = ["derive", "env"], optional = true }
+# Unmounts cleanly on Ctrl-C and SIGTERM (`lfs mount`).
+ctrlc = { version = "3.4", features = ["termination"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
 fuser = { version = "0.18", default-features = false, optional = true }

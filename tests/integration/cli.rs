@@ -79,6 +79,21 @@ fn mkfs_refuses_to_overwrite_a_volume_without_force() {
 }
 
 #[test]
+fn mkfs_sets_the_root_owner() {
+    let scratch = Scratch::new("owner");
+    let image = scratch.path("o.lfs");
+    ok(&[
+        "mkfs",
+        s(&image),
+        "--size",
+        "4M",
+        "--root-owner",
+        "1234:567",
+    ]);
+    assert!(fails(&["mkfs", s(&image), "--force", "--root-owner", "12"]).contains("UID:GID"));
+}
+
+#[test]
 fn files_round_trip_between_the_host_and_a_volume() {
     let scratch = Scratch::new("copy");
     let image = scratch.path("v.img");

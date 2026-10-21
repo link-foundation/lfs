@@ -40,7 +40,7 @@ pub mod names;
 #[cfg(test)]
 mod tests;
 
-pub use control::{CONTROL_DIR, CONTROL_DIR_INO, CONTROL_FILES};
+pub use control::{is_control, CONTROL_DIR, CONTROL_DIR_INO, CONTROL_FILES};
 pub use dir::{Creator, DirEntry};
 pub use file::CompactReport;
 pub use inode::{FileKind, Inode};
@@ -295,6 +295,8 @@ impl<D: BlockDevice> Fs<D> {
             &Inode {
                 mode: inode::S_IFDIR | 0o755,
                 nlink: 2,
+                uid: options.root_owner.0,
+                gid: options.root_owner.1,
                 mtime: created,
                 ctime: created,
                 atime: created,

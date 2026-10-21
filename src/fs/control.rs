@@ -145,13 +145,15 @@ impl<D: BlockDevice> Fs<D> {
                 self.control_content(ino)?.len() as u64,
             )
         };
+        // Whoever owns the volume's root may configure it.
+        let owner = self.inode(ROOT_INO)?;
         Ok(Attr {
             ino,
             kind,
             perm,
             nlink: if kind == FileKind::Dir { 2 } else { 1 },
-            uid: 0,
-            gid: 0,
+            uid: owner.uid,
+            gid: owner.gid,
             size,
             allocated: 0,
             atime: time,

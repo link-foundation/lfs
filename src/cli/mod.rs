@@ -1,6 +1,7 @@
 //! The `lfs` commands.
 
 mod copy;
+mod mount;
 
 use crate::{Cli, Command, LinkAction};
 use links_fs::config::{FormatOptions, Layout, NameEncoding, RUNTIME_KEYS};
@@ -282,7 +283,8 @@ fn remove(fs: &mut Volume, path: &str, recursive: bool) -> Outcome<()> {
 fn mkfs(
     image: &Path,
     size: Option<u64>,
-    options: &FormatOptions,
+    mut options: FormatOptions,
+    root_owner: Option<(u32, u32)>,
     label: &str,
     force: bool,
 ) -> Outcome<()> {
@@ -302,7 +304,8 @@ fn mkfs(
             |size| FileDevice::create(image, size),
         )
         .context(|| format!("opening {}", image.display()))?;
-    let fs = Fs::format(device, options, label).context(|| "formatting".into())?;
+    options.root_owner = root_owner.unwrap_or_else(|| image_owner(image));
+    let fs = Fs::format(device, &options, label).context(|| "formatting".into())?;
     let stats = fs.statfs();
     println!(
         "created {}: {} blocks of {} bytes, {} free, layout {}, names {}",
@@ -314,6 +317,34 @@ fn mkfs(
         options.name_encoding.name()
     );
     close(fs)
+}
+
+/// The owner of a regular image file (its creator), or root for devices and
+/// on systems without Unix owners.
+fn image_owner(image: &Path) -> (u32, u32) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(metadata) = std::fs::metadata(image) {
+            if metadata.is_file() {
+                return (metadata.uid(), metadata.gid());
+            }
+        }
+    }
+    let _ = image;
+    (0, 0)
+}
+
+/// Parses `UID:GID`.
+pub fn parse_owner(text: &str) -> std::result::Result<(u32, u32), String> {
+    let parse = |part: &str| {
+        part.parse::<u32>()
+            .map_err(|_| format!("expected UID:GID with numeric ids, got {text:?}"))
+    };
+    let (uid, gid) = text
+        .split_once(':')
+        .ok_or_else(|| format!("expected UID:GID, got {text:?}"))?;
+    Ok((parse(uid)?, parse(gid)?))
 }
 
 fn links_command(
@@ -377,6 +408,7 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
             names,
             journal_blocks,
             label,
+            root_owner,
             force,
         } => {
             let options = FormatOptions {
@@ -384,8 +416,9 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
                 layout: Layout::parse(&layout).context(|| "--layout".into())?,
                 name_encoding: NameEncoding::parse(&names).context(|| "--names".into())?,
                 journal_blocks,
+                root_owner: (0, 0),
             };
-            mkfs(&image, size, &options, &label, force)?;
+            mkfs(&image, size, options, root_owner, &label, force)?;
             if !set.is_empty() {
                 let mut fs = open(&image, true, &[])?;
                 for (key, value) in &set {
@@ -592,7 +625,7 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
             mountpoint,
             read_only,
             allow_other,
-        } => mount(&image, &mountpoint, read_only, allow_other, &set)?,
+        } => mount::mount(&image, &mountpoint, read_only, allow_other, &set)?,
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -619,52 +652,4 @@ fn convert(input: &Path, output: &Path, from: Option<&str>, to: Option<&str>) ->
         to.name()
     );
     Ok(())
-}
-
-#[allow(clippy::needless_pass_by_value, unused_variables)]
-fn mount(
-    image: &Path,
-    mountpoint: &Path,
-    read_only: bool,
-    allow_other: bool,
-    set: &[(String, String)],
-) -> Outcome<()> {
-    #[cfg(any(
-        all(
-            feature = "fuse",
-            any(target_os = "linux", target_os = "macos", target_os = "freebsd")
-        ),
-        all(feature = "dokan", windows)
-    ))]
-    {
-        let fs = open(image, !read_only, set)?;
-        let options = links_fs::driver::MountOptions {
-            read_only,
-            allow_other,
-            name: image
-                .file_name()
-                .map_or_else(|| "lfs".into(), |name| name.to_string_lossy().into_owned()),
-        };
-        eprintln!(
-            "mounted {} at {} (unmount to finish)",
-            image.display(),
-            mountpoint.display()
-        );
-        links_fs::driver::mount(fs, mountpoint, &options)
-            .context(|| format!("mounting at {}", mountpoint.display()))
-    }
-    #[cfg(not(any(
-        all(
-            feature = "fuse",
-            any(target_os = "linux", target_os = "macos", target_os = "freebsd")
-        ),
-        all(feature = "dokan", windows)
-    )))]
-    {
-        Err(Failure::Message(
-            "this lfs was built without a mount driver; rebuild with `--features fuse` \
-             (Linux, macOS) or `--features dokan` (Windows), or use put/get/ls"
-                .into(),
-        ))
-    }
 }
