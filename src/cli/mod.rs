@@ -319,19 +319,19 @@ fn mkfs(
     close(fs)
 }
 
-/// The owner of a regular image file (its creator), or root for devices and
-/// on systems without Unix owners.
+/// The owner of a regular image file (its creator), or root for devices.
+#[cfg(unix)]
 fn image_owner(image: &Path) -> (u32, u32) {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt;
-        if let Ok(metadata) = std::fs::metadata(image) {
-            if metadata.is_file() {
-                return (metadata.uid(), metadata.gid());
-            }
-        }
-    }
-    let _ = image;
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(image)
+        .ok()
+        .filter(std::fs::Metadata::is_file)
+        .map_or((0, 0), |metadata| (metadata.uid(), metadata.gid()))
+}
+
+/// Root: the volume has no host owner to inherit here.
+#[cfg(not(unix))]
+const fn image_owner(_image: &Path) -> (u32, u32) {
     (0, 0)
 }
 

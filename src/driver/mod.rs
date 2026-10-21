@@ -1,26 +1,81 @@
-//! Mounting volumes as native file systems: FUSE on Linux, macOS and
-//! FreeBSD (`fuse` feature) and Dokan on Windows (`dokan` feature).
+//! Mounting volumes as native file systems.
+//!
+//! FUSE serves Linux, macOS and FreeBSD (`fuse` feature) and Dokan serves
+//! Windows x64 (`dokan` feature). Builds without either still export
+//! [`spawn`] and [`mount`], which then report how to get a driver.
 //!
 //! Both drivers serve one [`Fs`] behind a mutex, commit it on `fsync`, on
 //! `commit-every` and when the volume is unmounted, and answer a request
 //! that panics with an I/O error instead of taking the mount down.
 
-#[cfg(all(feature = "dokan", windows))]
+#[cfg(all(
+    feature = "dokan",
+    windows,
+    any(target_arch = "x86_64", target_arch = "x86")
+))]
 mod dokan;
 #[cfg(all(
     feature = "fuse",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
 mod fuse;
+#[cfg(not(any(
+    all(
+        feature = "dokan",
+        windows,
+        any(target_arch = "x86_64", target_arch = "x86")
+    ),
+    all(
+        feature = "fuse",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    )
+)))]
+mod none;
 pub mod nt;
 
-#[cfg(all(feature = "dokan", windows))]
+#[cfg(all(
+    feature = "dokan",
+    windows,
+    any(target_arch = "x86_64", target_arch = "x86")
+))]
 pub use self::dokan::{mount, spawn, Mounted};
 #[cfg(all(
     feature = "fuse",
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
 pub use self::fuse::{mount, spawn, Mounted};
+#[cfg(not(any(
+    all(
+        feature = "dokan",
+        windows,
+        any(target_arch = "x86_64", target_arch = "x86")
+    ),
+    all(
+        feature = "fuse",
+        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
+    )
+)))]
+pub use self::none::{mount, spawn, Mounted};
+
+/// The mount driver in this build: `"fuse"`, `"dokan"` or `"none"`.
+pub const DRIVER: &str = if cfg!(all(
+    feature = "dokan",
+    windows,
+    any(target_arch = "x86_64", target_arch = "x86")
+)) {
+    "dokan"
+} else if cfg!(all(
+    feature = "fuse",
+    any(
+        target_os = "linux",
+        target_os = "macos",
+        target_os = "freebsd"
+    )
+)) {
+    "fuse"
+} else {
+    "none"
+};
 
 use crate::device::BlockDevice;
 use crate::error::{Error, Result};

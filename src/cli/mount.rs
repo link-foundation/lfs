@@ -1,16 +1,12 @@
 //! `lfs mount`: serves a volume through FUSE or Dokan until it is unmounted
 //! or the user presses Ctrl-C.
 
-use super::{Failure, Outcome};
+use super::{Context, Failure, Outcome};
+use links_fs::driver::{spawn, MountOptions};
 use std::path::Path;
+use std::sync::mpsc;
+use std::time::Duration;
 
-#[cfg(any(
-    all(
-        feature = "fuse",
-        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
-    ),
-    all(feature = "dokan", windows)
-))]
 pub fn mount(
     image: &Path,
     mountpoint: &Path,
@@ -18,11 +14,6 @@ pub fn mount(
     allow_other: bool,
     set: &[(String, String)],
 ) -> Outcome<()> {
-    use super::Context;
-    use links_fs::driver::{spawn, MountOptions};
-    use std::sync::mpsc;
-    use std::time::Duration;
-
     let fs = super::open(image, !read_only, set)?;
     let options = MountOptions {
         read_only,
@@ -59,26 +50,4 @@ pub fn mount(
     result.context(|| format!("unmounting {}", mountpoint.display()))?;
     eprintln!("unmounted {}", mountpoint.display());
     Ok(())
-}
-
-#[cfg(not(any(
-    all(
-        feature = "fuse",
-        any(target_os = "linux", target_os = "macos", target_os = "freebsd")
-    ),
-    all(feature = "dokan", windows)
-)))]
-#[allow(clippy::unnecessary_wraps)]
-pub fn mount(
-    _image: &Path,
-    _mountpoint: &Path,
-    _read_only: bool,
-    _allow_other: bool,
-    _set: &[(String, String)],
-) -> Outcome<()> {
-    Err(Failure::Message(
-        "this lfs was built without a mount driver; rebuild with `--features fuse` \
-         (Linux, macOS) or `--features dokan` (Windows), or use put/get/ls"
-            .into(),
-    ))
 }
