@@ -3,13 +3,21 @@ name: Workflows
 on:
   push:
     branches: [main]
-    paths: ['.github/**', 'scripts/check-workflow-tools.rs']
+    paths: ['.github/**', 'scripts/check-workflow-tools.rs', '**.sh']
   pull_request:
-    paths: ['.github/**', 'scripts/check-workflow-tools.rs']
+    paths: ['.github/**', 'scripts/check-workflow-tools.rs', '**.sh']
 
 # Keep the workflow read-only unless a job explicitly needs an additional scope.
 permissions:
   contents: read
+
+# Provide Git config to actions/checkout itself; checkout runs git init before
+# any workflow step can configure Git, and without it Git 2.54+ prints the
+# upcoming Git 3.0 default-branch hint in every checkout (issue #3).
+env:
+  GIT_CONFIG_COUNT: '1'
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
 
 jobs:
   actionlint:
@@ -93,12 +101,36 @@ jobs:
       # importing the noise. Measured: after the digest pin of the actionlint
       # image above it reports nothing, and stays silent until someone
       # reintroduces a mutable image reference.
+      #
+      # The token enables zizmor's online audits; without it this pass prints
+      # "zizmor is running in offline mode by default" and silently skips
+      # them, so it would audit less than the action run above (issue #3).
       - name: Audit for pedantic-only high-severity findings
         timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           pipx run zizmor==1.30.1 --config .github/zizmor.yml \
             --persona pedantic --min-severity high --min-confidence high \
             .
+
+  # actionlint shellchecks only inline `run:` blocks, so the standalone
+  # scripts that those blocks call were never linted (issue #3). Pinned
+  # through shellcheck-py so a runner image update cannot change the verdict.
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    concurrency:
+      group: check-${{ github.workflow }}-${{ github.ref }}-shellcheck
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Shellcheck every tracked shell script
+        run: git ls-files -z '*.sh' | xargs -0 pipx run --spec shellcheck-py==0.11.0.1 shellcheck
 
   workflow-tools:
     name: Workflow Tool Installation
@@ -131,6 +163,7 @@ jobs:
     needs:
       - actionlint
       - zizmor
+      - shellcheck
       - workflow-tools
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04

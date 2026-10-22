@@ -1403,9 +1403,14 @@ jobs:
           path: target/doc
           include-hidden-files: true
 
+      # deploy-pages v5.0.1 still bundles a dependency that loads Node's
+      # deprecated `punycode` module, which prints a DEP0040 warning on every
+      # deployment (actions/deploy-pages#434). Silence only that code.
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        env:
+          NODE_OPTIONS: --disable-warning=DEP0040
 
   # === PIPELINE STATUS ===
   # GitHub reports jobs killed by timeout-minutes as cancelled. Observe every

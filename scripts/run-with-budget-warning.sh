@@ -46,6 +46,7 @@ if ! status_dir="$(mktemp -d "${state_parent%/}/budget-status.XXXXXX")"; then
   echo "Could not create budget control state under ${state_parent}." >&2; exit 2
 fi
 status_file="${status_dir}/status"; stdout_file="${status_dir}/stdout"; stderr_file="${status_dir}/stderr"
+# shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() { rm -rf -- "$status_dir"; }
 trap cleanup EXIT
 trace "control state: ${status_dir}"
@@ -128,6 +129,7 @@ terminate_over_budget() {
   echo "::error title=${label} exceeded its execution budget::${label} ran for ${measured}s against its ${budget_seconds}s budget (detected at ${poll_seconds}s poll granularity) and was terminated. Command: $*"
   exit 124
 }
+# shellcheck disable=SC2329 # invoked by the TERM/INT trap below
 forward() { signal_command TERM; wait "$command_pid" 2>/dev/null || true; relay_output; exit 143; }
 trap forward TERM INT
 

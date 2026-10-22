@@ -38,6 +38,7 @@ mod issue_171;
 mod issue_172;
 mod issue_188;
 mod issue_193;
+mod lfs_issue_3;
 #[path = "../../../scripts/release-naming.rs"]
 mod release_naming;
 mod release_naming_tests;

@@ -32,3 +32,9 @@ repos:
         language: system
         types: [rust]
         pass_filenames: false
+
+  # The same pinned shellcheck as the ShellCheck job in workflows.yml.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
