@@ -38,6 +38,7 @@ mod issue_171;
 mod issue_172;
 mod issue_188;
 mod issue_193;
+mod lfs_issue_3;
 #[path = "../../../scripts/release-naming.rs"]
 mod release_naming;
 mod release_naming_tests;
@@ -62,5 +63,6 @@ mod version_and_commit_tag_order;
 mod wait_for_crate;
 mod workflow_desktop_release;
 mod workflow_release;
+mod workflow_release_gates;
 mod workflow_security;
 mod workspace_manifest_resolution;

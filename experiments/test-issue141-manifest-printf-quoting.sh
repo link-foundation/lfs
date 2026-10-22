@@ -19,6 +19,7 @@ touch abc123 def456
 export DOCKERHUB_IMAGE=myorg/myimage
 
 echo "== buggy form (single quotes) =="
+# shellcheck disable=SC2016 # reproduces the single-quoted bug on purpose
 mapfile -t buggy < <(printf '${DOCKERHUB_IMAGE}@sha256:%s\n' *)
 printf '  %s\n' "${buggy[@]}"
 
@@ -35,6 +36,7 @@ for ref in "${fixed[@]}"; do
   esac
 done
 
+# shellcheck disable=SC2016 # looks for the literal, unexpanded reference
 if printf '%s\n' "${buggy[@]}" | grep -qF '${DOCKERHUB_IMAGE}'; then
   echo "OK: buggy form reproduces the unexpanded reference"
 else

@@ -167,6 +167,17 @@ fn lock(file: &File, path: &Path, exclusive: bool) -> Result<()> {
     }
 }
 
+impl Drop for FileDevice {
+    /// Unlocks explicitly instead of relying on the close: a `flock` lock
+    /// belongs to the open file description, which a child that another
+    /// thread is spawning shares until it execs. Closing alone then leaves
+    /// the volume "in use" for that moment, so a reopen right after the
+    /// unmount fails (issue #3).
+    fn drop(&mut self) {
+        let _ = self.file.unlock();
+    }
+}
+
 impl BlockDevice for FileDevice {
     fn len_bytes(&self) -> u64 {
         self.len
@@ -315,6 +326,19 @@ mod tests {
             "a refused create truncates nothing"
         );
         drop(writer);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn dropping_a_device_unlocks_it_while_its_descriptor_is_shared() {
+        let path = std::env::temp_dir().join(format!("lfs-shared-{}.img", std::process::id()));
+        let writer = FileDevice::create(&path, 4096).unwrap();
+        // What a child that another thread is spawning holds until it execs
+        // (issue #3): a second descriptor of the same open file description.
+        let inherited = writer.file.try_clone().unwrap();
+        drop(writer);
+        let reader = FileDevice::open(&path, false).unwrap();
+        drop((reader, inherited));
         std::fs::remove_file(path).unwrap();
     }
 }

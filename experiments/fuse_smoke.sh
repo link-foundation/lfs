@@ -29,7 +29,7 @@ head -c 3000000 /dev/urandom > "$work/big"
 cp "$work/big" "$mnt/big"
 cmp "$work/big" "$mnt/big"
 rm "$mnt/d/h2"
-! rmdir "$mnt/d" 2>/dev/null
+if rmdir "$mnt/d" 2>/dev/null; then exit 1; fi
 echo "(atime: on)" > "$mnt/.lfs/config"
 grep -q "(atime: on)" "$mnt/.lfs/config"
 cat "$mnt/.lfs/stats"
@@ -39,7 +39,7 @@ set +x
 kill -INT "$pid"
 wait "$pid"
 cat "$work/mount.log"
-! mountpoint -q "$mnt"
+if mountpoint -q "$mnt"; then exit 1; fi
 "$lfs" fsck "$work/img.lfs"
 "$lfs" ls -R -l "$work/img.lfs"
 "$lfs" config "$work/img.lfs" | grep "(atime: on)"
