@@ -1,3 +1,7 @@
+# dev/log holds raw CI evidence collected while solving an issue; it is kept
+# verbatim, so the whitespace and large-file hooks must not rewrite it.
+exclude: ^dev/log/
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
