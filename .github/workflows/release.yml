@@ -586,6 +586,8 @@ jobs:
         shell: bash
         env:
           TEST_BUDGET_SECONDS: 900
+          # Panics on driver threads abort the test binary; keep their stack.
+          RUST_BACKTRACE: "1"
         run: >-
           bash scripts/run-with-budget-warning.sh "$TEST_BUDGET_SECONDS" "Test suite"
           cargo test --all-features --verbose
