@@ -71,7 +71,9 @@ jobs:
           # Check all Markdown and HTML files
           # Exclude case-studies directory - these are research documents from
           # external repos with references to files and issues that don't exist
-          # in this repository (similar exclusion pattern as eslint.config.js)
+          # in this repository (similar exclusion pattern as eslint.config.js).
+          # dev/log holds the same kind of material: raw CI evidence collected
+          # while solving an issue (issue #3).
           args: >-
             --verbose
             --no-progress
@@ -80,6 +82,7 @@ jobs:
             --max-retries 3
             --timeout 30
             --exclude-path docs/case-studies
+            --exclude-path dev/log
             --exclude-path scripts/fixtures
             './**/*.md'
             './**/*.html'
