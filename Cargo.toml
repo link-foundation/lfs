@@ -1,15 +1,15 @@
 [package]
-name = "example-sum-package-name"
+name = "links-fs"
 version = "0.20.2"
 edition = "2021"
-description = "A Rust package template for AI-driven development"
+description = "LFS: a links file system driver (Linux, macOS, Windows) with an embedded doublets links database, one shared journal and no fragmentation"
 readme = "README.md"
 license = "Unlicense"
-keywords = ["template", "rust", "ai-driven"]
-categories = ["development-tools"]
-repository = "https://github.com/link-foundation/rust-ai-driven-development-pipeline-template"
-documentation = "https://github.com/link-foundation/rust-ai-driven-development-pipeline-template"
-rust-version = "1.70"
+keywords = ["filesystem", "fuse", "doublets", "links", "dokan"]
+categories = ["filesystem", "database-implementations"]
+repository = "https://github.com/link-foundation/lfs"
+documentation = "https://docs.rs/links-fs"
+rust-version = "1.89"
 
 # Narrow allowlist of files shipped in the published `.crate` archive.
 # Keeping this list tight prevents docs, case studies, generated CI artifacts,
@@ -24,24 +24,58 @@ include = [
 ]
 
 [lib]
-name = "example_sum_package_name"
+name = "links_fs"
 path = "src/lib.rs"
 
 [[bin]]
-name = "example-sum-package-name"
+name = "lfs"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# Command line tool (`lfs`).
+cli = ["dep:clap", "dep:ctrlc"]
+# FUSE driver for Linux and FreeBSD (pure Rust, needs `fusermount3` at
+# runtime) and macOS (needs macFUSE or FUSE-T to build and run).
+fuse = ["dep:fuser"]
+# Dokan driver for Windows x64 (the Dokan 2 driver must be installed at
+# runtime); ignored on other targets.
+dokan = ["dep:dokan-sys", "dep:widestring", "dep:winapi"]
+# NFSv3 server on localhost, for every platform: macOS mounts it with the
+# built-in `mount_nfs` (no kernel extension), Linux with `mount -t nfs`.
+nfs = ["dep:nfs3_server", "dep:tokio"]
 
 [dependencies]
-lino-arguments = "0.3"
-clap = { version = "4.4", features = ["derive", "env"] }
+links-notation = { version = "0.27", default-features = false }
+clap = { version = "4.4", features = ["derive", "env"], optional = true }
+# Unmounts cleanly on Ctrl-C and SIGTERM (`lfs mount`).
+ctrlc = { version = "3.4", features = ["termination"], optional = true }
+nfs3_server = { version = "0.11.1", optional = true }
+tokio = { version = "1.44", default-features = false, features = ["rt", "net", "sync", "time", "macros"], optional = true }
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
+fuser = { version = "0.18", default-features = false, optional = true }
+
+[target.'cfg(all(windows, any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
+# Raw bindings: the `dokan` crate on top of them dereferences null file
+# contexts (see src/driver/dokan/mod.rs).
+dokan-sys = { version = "0.3.1", optional = true }
+winapi = { version = "0.3.9", optional = true, features = ["fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
+widestring = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
+doublets = "0.8"
+# Talks NFSv3 to the `nfs` driver over TCP, on every platform.
+nfs3_client = { version = "0.9", features = ["tokio"] }
 regex = "1"
 serde_json = "1"
 walkdir = "2"
 
 [lints.rust]
-unsafe_code = "forbid"
+# Denied, not forbidden: the Dokan bindings (src/driver/dokan/ffi.rs) are
+# the one module that allows it.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }
@@ -53,6 +87,11 @@ module_name_repetitions = "allow"
 too_many_lines = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Block/record arithmetic converts between u64 offsets and usize indices a lot.
+cast_possible_truncation = "allow"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
 
 [[test]]
 name = "unit"

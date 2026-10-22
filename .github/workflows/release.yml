@@ -533,11 +533,64 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
+      # The mount tests must mount for real here instead of skipping.
+      - name: Install FUSE on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fuse3 nfs-common
+          echo "LFS_REQUIRE_FUSE=1" >> "$GITHUB_ENV"
+          echo "LFS_REQUIRE_NFS=1" >> "$GITHUB_ENV"
+
+      # fuser links against macFUSE's libfuse on macOS. Runners cannot load
+      # its file system extension, so the FUSE mount is only built here; the
+      # NFS driver mounts for real with the built-in mount_nfs instead.
+      - name: Install macFUSE on macOS
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask macfuse
+          brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LFS_REQUIRE_NFS=1" >> "$GITHUB_ENV"
+
+      # dokan-sys links against the installed Dokan library when
+      # DokanLibrary2_LibraryPath_x64 is set, so the build matches the driver.
+      - name: Install Dokan on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DOKAN_MSI_URL: https://github.com/dokan-dev/dokany/releases/download/v2.3.1.1000/Dokan_x64.msi
+          DOKAN_MSI_SHA256: 69ff8cb37bfec3a75921c85ffd1c6370b50a9ec4ecef2cf3a009d488dcbf5465
+        run: |
+          $msi = Join-Path $env:RUNNER_TEMP 'Dokan_x64.msi'
+          Invoke-WebRequest -Uri $env:DOKAN_MSI_URL -OutFile $msi
+          $hash = (Get-FileHash -Algorithm SHA256 $msi).Hash.ToLowerInvariant()
+          if ($hash -ne $env:DOKAN_MSI_SHA256) { throw "Dokan_x64.msi has SHA-256 $hash" }
+          $install = Start-Process msiexec.exe -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($install.ExitCode -notin 0, 3010) { throw "msiexec failed with $($install.ExitCode)" }
+          $driver = Join-Path $env:SystemRoot 'System32\drivers\dokan2.sys'
+          $dll = Join-Path $env:SystemRoot 'System32\dokan2.dll'
+          if (-not ((Test-Path $driver) -and (Test-Path $dll))) {
+            Get-ChildItem -Recurse "$env:ProgramFiles\Dokan" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+            throw 'the Dokan installer did not install dokan2.sys and dokan2.dll'
+          }
+          # Link against the installed import library when the installer
+          # ships one; otherwise dokan-sys builds it from its bundled sources.
+          $lib = [Environment]::GetEnvironmentVariable('DokanLibrary2_LibraryPath_x64', 'Machine')
+          if (-not $lib) {
+            $found = Get-ChildItem -Recurse "$env:ProgramFiles\Dokan" -Filter dokan2.lib -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $lib = $found.DirectoryName }
+          }
+          if ($lib) { "DokanLibrary2_LibraryPath_x64=$lib" >> $env:GITHUB_ENV }
+          'LFS_REQUIRE_DOKAN=1' >> $env:GITHUB_ENV
+
       # cargo test includes doc tests with the same feature set.
       - name: Run tests
         shell: bash
         env:
           TEST_BUDGET_SECONDS: 900
+          # Panics on driver threads abort the test binary; keep their stack.
+          RUST_BACKTRACE: "1"
         run: >-
           bash scripts/run-with-budget-warning.sh "$TEST_BUDGET_SECONDS" "Test suite"
           cargo test --all-features --verbose
@@ -599,6 +652,60 @@ jobs:
         # broken suite does not hide the state of the others.
         run: bash scripts/test-scripts.sh
 
+  # === WEBASSEMBLY BLUEPRINT ===
+  # docs/visualizer/blueprint.html runs LFS itself, compiled to WebAssembly
+  # (src/wasm.rs), to format, open and walk a volume byte by byte. Build it the
+  # way Pages does and check it from Node so a broken export never deploys.
+  wasm:
+    name: WebAssembly Blueprint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-wasm
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    needs: [detect-changes, cargo-lock]
+    if: |
+      !cancelled() && (
+        needs.cargo-lock.result == 'success' && (
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.any-code-changed == 'true' ||
+          needs.detect-changes.outputs.docs-changed == 'true' ||
+          needs.detect-changes.outputs.workflow-changed == 'true'
+        )
+      )
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch @ 2026-10-01
+        with:
+          # The `stable` ref is what supplied the action's default toolchain;
+          # once pinned to a hash the input has to be restated explicitly.
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Clippy for wasm32
+        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features
+
+      - name: Build lfs.wasm
+        run: bash docs/visualizer/build-wasm.sh
+
+      - name: Test lfs.wasm from Node
+        run: node --test docs/visualizer/lfs.test.mjs
+
   # === CODE COVERAGE ===
   # Generate and upload code coverage using cargo-llvm-cov
   coverage:
@@ -649,6 +756,9 @@ jobs:
           # The `cargo-llvm-cov` ref is what supplied the tool name; once
           # pinned to a hash the input has to be restated explicitly.
           tool: cargo-llvm-cov
+
+      - name: Install FUSE
+        run: sudo apt-get update && sudo apt-get install -y fuse3
 
       - name: Generate code coverage
         env:
@@ -1269,6 +1379,18 @@ jobs:
           sed "s#__REPOSITORY__#$REPOSITORY#g" \
             docs/download/index.html > target/doc/download/index.html
 
+      - name: Build the blueprint's WebAssembly
+        # blueprint.html loads lfs.wasm, which is built here, not committed.
+        run: |
+          rustup target add wasm32-unknown-unknown
+          bash docs/visualizer/build-wasm.sh
+          node --test docs/visualizer/lfs.test.mjs
+
+      - name: Add disk-space map visualizer
+        # A static page with its sample maps; regenerate the samples with
+        # docs/visualizer/make-samples.sh.
+        run: cp -r docs/visualizer target/doc/visualizer
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
 
@@ -1303,6 +1425,7 @@ jobs:
       - lint
       - test
       - script-tests
+      - wasm
       - coverage
       - build
       - auto-release

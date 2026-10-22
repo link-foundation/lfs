@@ -1,4 +1,4 @@
-# Contributing to rust-ai-driven-development-pipeline-template
+# Contributing to LFS
 
 Thank you for your interest in contributing! This document provides guidelines and instructions for contributing to this project.
 
@@ -7,8 +7,8 @@ Thank you for your interest in contributing! This document provides guidelines a
 1. **Fork and clone the repository**
 
    ```bash
-   git clone https://github.com/YOUR-USERNAME/rust-ai-driven-development-pipeline-template.git
-   cd rust-ai-driven-development-pipeline-template
+   git clone https://github.com/YOUR-USERNAME/lfs.git
+   cd lfs
    ```
 
 2. **Install Rust**
@@ -36,8 +36,26 @@ Thank you for your interest in contributing! This document provides guidelines a
 5. **Build the project**
 
    ```bash
-   cargo build
+   cargo build --all-features
    ```
+
+6. **Install a mount framework** (only to mount volumes)
+
+   - Linux: `sudo apt-get install fuse3`. The FUSE mount tests run when
+     `/dev/fuse` exists, and `LFS_REQUIRE_FUSE=1` makes them fail instead of
+     skipping.
+   - macOS: [macFUSE](https://osxfuse.github.io/), which the `fuse` feature
+     also needs to build.
+   - Windows x64: [Dokan 2](https://github.com/dokan-dev/dokany/releases).
+     `LFS_REQUIRE_DOKAN=1` makes the Windows mount tests fail instead of
+     skipping, and `LFS_DOKAN_TRACE=1` logs every Dokan callback.
+   - NFS (`nfs` feature, any system): the NFS tests need nothing installed.
+     `LFS_REQUIRE_NFS=1` also mounts with the system's NFS client: as the
+     user with `mount_nfs` on macOS, through `sudo -n mount -t nfs` on Linux
+     (`sudo apt-get install nfs-common`).
+
+   `bash experiments/issue-1-cross-check.sh` runs Clippy for the Windows and
+   macOS drivers from Linux.
 
 ## Development Workflow
 
@@ -290,16 +308,22 @@ Fragments are automatically collected into CHANGELOG.md during the release proce
 .
 ├── .github/workflows/    # GitHub Actions CI/CD
 ├── changelog.d/          # Changelog fragments
-│   ├── README.md         # Fragment instructions
-│   └── *.md              # Individual changelog fragments
-├── examples/             # Usage examples
-├── scripts/              # Rust scripts (via rust-script)
+├── docs/
+│   ├── case-studies/issue-1/  # Design, research and requirement mapping
+│   ├── screenshots/      # Screenshots used by the README and PRs
+│   └── visualizer/       # Disk-space map visualizer (GitHub Pages)
+├── examples/             # Library usage examples
+├── experiments/          # Experiment and debug scripts
+├── scripts/              # CI/CD scripts (via rust-script)
 ├── src/
 │   ├── lib.rs            # Library entry point
-│   └── main.rs           # Binary entry point
-├── tests/                # Integration tests
-├── .gitignore            # Git ignore patterns
-├── .pre-commit-config.yaml  # Pre-commit hooks
+│   ├── main.rs, cli/     # The `lfs` command line tool
+│   ├── superblock.rs, journal.rs, space.rs, chunked.rs, varstore.rs
+│   │                     # On-disk structures, journal and allocator
+│   ├── sbt.rs, links/    # The embedded doublets links database
+│   ├── fs/               # Files and directories as links, compaction, fsck
+│   └── driver/           # FUSE and Dokan drivers
+├── tests/                # Unit (CI/CD) and integration tests
 ├── Cargo.toml            # Project configuration
 ├── CHANGELOG.md          # Project changelog
 ├── CONTRIBUTING.md       # This file

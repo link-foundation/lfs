@@ -120,7 +120,9 @@ fn check_directory(cwd: &Path) -> CheckResult {
         violations: Vec::new(),
     };
 
+    // Sorted, so findings come out in the same order on every file system.
     for entry in WalkDir::new(cwd)
+        .sort_by_file_name()
         .into_iter()
         .filter_map(std::result::Result::ok)
         .filter(|e| e.file_type().is_file())
@@ -213,7 +215,7 @@ fn changed_files(raw: Option<&str>) -> Option<BTreeSet<String>> {
 /// changed by the current pull request, so unchanged files stop repeating the
 /// same warning on every run. The hard limit stays repository-wide.
 fn should_annotate(finding: &Finding, changed: Option<&BTreeSet<String>>) -> bool {
-    changed.map_or(true, |changed| changed.contains(&finding.file))
+    changed.is_none_or(|changed| changed.contains(&finding.file))
 }
 
 #[cfg(not(test))]

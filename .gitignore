@@ -57,3 +57,5 @@ doc/
 *.log
 logs/
 ci-logs/
+docs/visualizer/lfs.wasm
+.playwright-mcp/

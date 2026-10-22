@@ -167,8 +167,7 @@ fn release_workflow_jobs_have_explicit_timeouts() {
         ("detect-changes", 5),
         // Docs validation (issue #161): required documents and their sections.
         ("validate-docs", 5),
-        // Probes the publish credentials before the matrix spends a minute
-        // (issues #163 and #167).
+        // Probes publish credentials before the matrix spends a minute (#163, #167).
         ("release-preflight", 5),
         ("changelog", 10),
         ("version-check", 5),
@@ -183,6 +182,7 @@ fn release_workflow_jobs_have_explicit_timeouts() {
         // Compiles and runs every scripts/*.rs test harness from scratch; the
         // cargo-install of rust-script dominates a cold run. See issue #150.
         ("script-tests", 20),
+        ("wasm", 15), // WebAssembly build and the blueprint page's API tests.
         ("coverage", 15),
         ("build", 10),
         ("auto-release", 60),
