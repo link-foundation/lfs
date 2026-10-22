@@ -1,6 +1,6 @@
 [package]
 name = "links-fs"
-version = "0.21.0"
+version = "0.21.1"
 edition = "2021"
 description = "LFS: a links file system driver (Linux, macOS, Windows) with an embedded doublets links database, one shared journal and no fragmentation"
 readme = "README.md"
