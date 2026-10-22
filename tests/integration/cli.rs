@@ -256,6 +256,18 @@ fn the_links_database_is_usable_from_the_command_line() {
     assert_eq!(ok(&["ls", other]), ".lfs\n");
     ok_with(&["import-links", other, "-"], Some(text.as_bytes()));
     assert!(ok(&["fsck", other]).contains("clean"));
+    // An import is all or nothing: a bad last line keeps the good ones out.
+    let before = ok(&["export-links", other, "-", "--format", "lino"]);
+    let bad = "(500: 500 500)\n(501: 500 $7)\n(502: 2000 3000)\n";
+    let output = lfs(
+        &["import-links", other, "-", "--format", "lino"],
+        Some(bad.as_bytes()),
+    );
+    assert!(!output.status.success());
+    assert_eq!(
+        ok(&["export-links", other, "-", "--format", "lino"]),
+        before
+    );
 }
 
 #[test]
