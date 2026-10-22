@@ -49,6 +49,9 @@ link chunks, so the volume does not fragment.
 - **Crash safety.** The allocation state is rebuilt from block owners at
   mount, so there is no bitmap to disagree with. Freed blocks stay reserved
   until the commit lands. `lfs fsck` checks every invariant.
+- **One writer at a time.** An image open for writing (a mount, `lfs
+  put`, `lfs serve`) is locked; other processes get "in use" instead of
+  corrupting it. Readers share the lock.
 
 ## Quick Start
 

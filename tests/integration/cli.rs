@@ -79,6 +79,31 @@ fn mkfs_refuses_to_overwrite_a_volume_without_force() {
 }
 
 #[test]
+fn a_volume_in_use_refuses_other_processes() {
+    let scratch = Scratch::new("busy");
+    let image = scratch.path("b.img");
+    let image = s(&image);
+    ok(&["mkfs", image, "--size", "4M"]);
+    // Another process (here: this test) has the image open for writing,
+    // as a mount would.
+    let held = links_fs::device::FileDevice::open(image, true).unwrap();
+    for args in [
+        &["write", image, "/f"][..],
+        &["ls", image, "/"],
+        &["mkfs", image, "--size", "4M", "--force"],
+    ] {
+        let error = fails(args);
+        assert!(
+            error.contains("in use by another process"),
+            "{args:?}: {error}"
+        );
+    }
+    drop(held);
+    ok_with(&["write", image, "/f"], Some(b"free again"));
+    assert_eq!(ok(&["cat", image, "/f"]), "free again");
+}
+
+#[test]
 fn mkfs_sets_the_root_owner() {
     let scratch = Scratch::new("owner");
     let image = scratch.path("o.lfs");

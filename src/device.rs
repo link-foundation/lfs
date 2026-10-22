@@ -6,7 +6,7 @@
 //! visualizer) and [`CrashDevice`] simulates power loss for journal tests.
 
 use crate::error::{Error, Result};
-use std::fs::{File, OpenOptions};
+use std::fs::{File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
@@ -113,23 +113,57 @@ pub struct FileDevice {
 
 impl FileDevice {
     /// Creates (or truncates) an image file of `len` bytes.
+    ///
+    /// Fails with [`Error::Busy`] while another handle has the file open,
+    /// before anything is truncated.
     pub fn create(path: impl AsRef<Path>, len: u64) -> Result<Self> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
-            .truncate(true)
-            .open(path)?;
+            .truncate(false)
+            .open(path.as_ref())?;
+        lock(&file, path.as_ref(), true)?;
+        file.set_len(0)?;
         file.set_len(len)?;
         Ok(Self { file, len })
     }
 
     /// Opens an existing image file or device.
+    ///
+    /// A writable open takes an exclusive lock on the file and a read-only
+    /// open a shared one, so two processes never write one volume at once
+    /// and nobody reads it while another process writes it. A file that is
+    /// locked that way fails with [`Error::Busy`]; where the platform or the
+    /// file system has no locks, the device opens unlocked.
     pub fn open(path: impl AsRef<Path>, writable: bool) -> Result<Self> {
-        let mut file = OpenOptions::new().read(true).write(writable).open(path)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .write(writable)
+            .open(path.as_ref())?;
+        lock(&file, path.as_ref(), writable)?;
         // Raw devices report a zero length in metadata; seeking finds the size.
         let len = file.seek(SeekFrom::End(0))?;
         Ok(Self { file, len })
+    }
+}
+
+/// Locks `file` for the lifetime of the handle (`flock` on Unix,
+/// `LockFileEx` on Windows): exclusive for writers, shared for readers.
+fn lock(file: &File, path: &Path, exclusive: bool) -> Result<()> {
+    let locked = if exclusive {
+        file.try_lock()
+    } else {
+        file.try_lock_shared()
+    };
+    match locked {
+        Err(TryLockError::WouldBlock) => Err(Error::Busy(format!(
+            "{} is in use by another process (mounted or open for writing)",
+            path.display()
+        ))),
+        // Without lock support (some network file systems, WebAssembly) the
+        // volume still works, only without the protection.
+        Ok(()) | Err(TryLockError::Error(_)) => Ok(()),
     }
 }
 
@@ -258,6 +292,29 @@ mod tests {
         device.read_at(100, &mut buf).unwrap();
         assert_eq!(&buf, b"links");
         drop(device);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn one_writer_or_many_readers_open_an_image() {
+        let path = std::env::temp_dir().join(format!("lfs-lock-{}.img", std::process::id()));
+        let busy = |result: Result<FileDevice>| matches!(result, Err(Error::Busy(_)));
+        let writer = FileDevice::create(&path, 4096).unwrap();
+        assert!(busy(FileDevice::open(&path, true)));
+        assert!(busy(FileDevice::open(&path, false)));
+        assert!(busy(FileDevice::create(&path, 8192)));
+        drop(writer);
+        let first = FileDevice::open(&path, false).unwrap();
+        let second = FileDevice::open(&path, false).unwrap();
+        assert!(busy(FileDevice::open(&path, true)));
+        drop((first, second));
+        let writer = FileDevice::open(&path, true).unwrap();
+        assert_eq!(
+            writer.len_bytes(),
+            4096,
+            "a refused create truncates nothing"
+        );
+        drop(writer);
         std::fs::remove_file(path).unwrap();
     }
 }
