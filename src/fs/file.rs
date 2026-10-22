@@ -444,8 +444,11 @@ impl<D: BlockDevice> Fs<D> {
     /// Moves every file, chunk and chunk table into the lowest free extent
     /// that fits, until nothing moves, and moves objects stuck behind a gap
     /// smaller than them out of the way, so all free space ends up in one
-    /// extent at the end of the volume. Without a journal every commit moves
-    /// the chunks it changes to fresh blocks, which leaves a few small gaps.
+    /// extent at the end of the volume. Two cases keep more than one extent:
+    /// a file larger than every free extent cannot be moved out of the way
+    /// (files stay contiguous and are never copied onto themselves), and
+    /// without a journal every commit moves the chunks it changes to fresh
+    /// blocks, which leaves a few small gaps.
     pub fn compact(&mut self) -> Result<CompactReport> {
         self.compact_except(None)
     }

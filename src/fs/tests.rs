@@ -420,6 +420,22 @@ fn compaction_closes_gaps_too_small_for_the_files_after_them() {
 }
 
 #[test]
+fn compaction_stops_at_a_file_larger_than_every_free_extent() {
+    let mut fs = Fs::format(MemDevice::new(MIB), &options(1024, Layout::United), "b").unwrap();
+    put(&mut fs, "/a", &pattern(200_000, 1));
+    put(&mut fs, "/big", &pattern(500_000, 2));
+    fs.unlink(ROOT_INO, "a").unwrap();
+    fs.commit().unwrap();
+    let report = fs.compact().unwrap();
+    // The gap before /big and the space after it are both smaller than
+    // /big, which never moves onto itself.
+    assert_eq!(fs.space().free_extents().count(), 2, "{report:?}");
+    assert_eq!(report.files, 0);
+    assert_eq!(get(&mut fs, "/big"), pattern(500_000, 2));
+    assert_clean(&fs);
+}
+
+#[test]
 fn a_large_file_fits_after_automatic_compaction() {
     let mut fs = Fs::format(MemDevice::new(MIB), &options(1024, Layout::United), "a").unwrap();
     for i in 0..30 {
