@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LFS disk blueprint</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 4 4%22%3E%3Crect width=%224%22 height=%224%22 fill=%22%232a78d6%22/%3E%3Crect x=%222%22 width=%222%22 height=%222%22 fill=%22%23eb6834%22/%3E%3C/svg%3E">
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-0: #f3f2ef;
+  --surface-1: #fcfcfb;
+  --border: #dcdbd6;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77766f;
+  --file: #2a78d6;
+  --links: #eb6834;
+  --meta: #1baf7a;
+  --free: #e6e5e0;
+  --pending: #a8a7a0;
+  --focus: #0b0b0b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --border: #3a3a37;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a998f;
+    --file: #3987e5;
+    --links: #d95926;
+    --meta: #199e70;
+    --free: #2c2c2a;
+    --pending: #6b6a64;
+    --focus: #f0efec;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --border: #3a3a37;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #9a998f;
+  --file: #3987e5;
+  --links: #d95926;
+  --meta: #199e70;
+  --free: #2c2c2a;
+  --pending: #6b6a64;
+  --focus: #f0efec;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.viz-root {
+  min-height: 100vh;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 24px;
+}
+main { max-width: 1180px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 0 0 10px; }
+.lead { color: var(--text-secondary); margin: 0 0 20px; max-width: 78ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+button, .controls label.file, input, select {
+  font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+}
+button, .controls label.file { cursor: pointer; }
+button[aria-pressed="true"] { border-color: var(--text-primary); font-weight: 600; }
+button:focus-visible, input:focus-visible, select:focus-visible, .controls label.file:focus-within {
+  outline: 2px solid var(--focus); outline-offset: 2px;
+}
+button:disabled { opacity: .5; cursor: default; }
+.controls input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.hint { color: var(--text-muted); font-size: 12px; }
+.panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.panel.drag { outline: 2px dashed var(--text-secondary); outline-offset: -6px; }
+.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 14px; }
+.form label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--text-secondary); }
+.form label b { color: var(--text-primary); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+.form label.changed b::after { content: " •"; color: var(--links); }
+.form input, .form select { width: 100%; }
+.form-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
+.stat .label { color: var(--text-secondary); font-size: 12px; }
+.stat .value { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .sub { color: var(--text-muted); font-size: 12px; }
+pre { font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 8px 0 0; white-space: pre-wrap; }
+nav.crumbs { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-bottom: 8px; }
+nav.crumbs button { padding: 2px 8px; font-size: 13px; }
+nav.crumbs span { color: var(--text-muted); }
+.current { margin: 0 0 10px; }
+.current .title { font-size: 17px; font-weight: 600; }
+.current .meta { color: var(--text-secondary); font-size: 13px; }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-variant-numeric: tabular-nums; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; padding: 0; list-style: none; color: var(--text-secondary); font-size: 13px; }
+.legend li { display: flex; align-items: center; gap: 6px; }
+canvas.swatch { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+#strip-wrap { position: relative; }
+#strip { display: block; width: 100%; height: 40px; cursor: pointer; }
+.ruler { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 12px; margin-top: 4px; }
+#tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 2;
+  background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  max-width: 360px;
+}
+#tooltip .k { color: var(--text-secondary); }
+.goto { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 12px; }
+.goto input { width: 160px; }
+.scroll { max-height: 420px; overflow: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 12px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+td.num, th.num { text-align: right; }
+td.kind { white-space: nowrap; }
+td.kind canvas { vertical-align: -2px; margin-right: 6px; }
+td.value { max-width: 280px; word-break: break-all; }
+tbody tr { cursor: pointer; }
+tbody tr:hover, tbody tr.hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+tbody tr.selected { background: color-mix(in srgb, var(--text-primary) 11%, transparent); }
+td .open { color: var(--text-muted); }
+.hex { font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; overflow-x: auto; }
+.hex .row { display: flex; gap: 14px; }
+.hex .addr { color: var(--text-muted); }
+.hex .b { display: inline-block; width: 2.4ch; text-align: center; cursor: pointer; border-radius: 2px; }
+.hex .a { display: inline-block; width: 1ch; cursor: pointer; }
+.hex .out { opacity: .3; }
+.hex .sel { font-weight: 700; }
+.hex .hl { box-shadow: inset 0 -2px 0 var(--text-primary); }
+.hex-nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+#selected { margin: 0 0 8px; font-size: 13px; color: var(--text-secondary); }
+#selected b { color: var(--text-primary); }
+.error { color: #d03b3b; }
+footer { color: var(--text-muted); font-size: 12px; }
+a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <h1>LFS disk blueprint</h1>
+  <p class="lead">Every byte of an LFS volume of any configuration, from the volume down to each
+  field of the superblock, the journal, the chunk tables, every links record and index cell, and
+  each file's extent. LFS itself, built for WebAssembly, formats the volume in your browser. Pick a
+  configuration or open an image (<code>lfs demo demo.img</code> makes one). Click a region to
+  open it, or click a byte to find the field that holds it. The block-level view is the
+  <a href="index.html">disk-space map</a>.</p>
+
+  <div class="controls" role="toolbar" aria-label="Presets">
+    <span class="hint">Likely configurations:</span>
+    <span id="presets" style="display:contents"></span>
+    <label class="file">Open image…<input type="file" id="file" accept=".img,.bin,application/octet-stream"></label>
+    <button type="button" id="theme" aria-label="Toggle dark mode">Theme</button>
+  </div>
+
+  <p id="status" class="error" role="alert" hidden></p>
+
+  <section class="panel" aria-labelledby="config-title">
+    <h2 id="config-title">Configuration</h2>
+    <form id="form" class="form"></form>
+    <div class="form-actions">
+      <button type="submit" form="form" id="build">Build volume</button>
+      <button type="button" id="reset">Defaults</button>
+      <button type="button" id="share">Copy link</button>
+      <span class="hint">Format keys (<code>lfs demo --help</code>) and runtime keys (<code>lfs config --help</code>) · <code>?config=key=value;…</code> · • marks a changed key</span>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="stats-title">
+    <h2 id="stats-title">Volume <span id="source" class="hint"></span></h2>
+    <div class="stats" id="stats"></div>
+    <details><summary class="hint">Stored configuration (links notation)</summary><pre id="lino"></pre></details>
+  </section>
+
+  <section class="panel" id="drop" aria-labelledby="bp-title">
+    <h2 id="bp-title">Blueprint</h2>
+    <nav class="crumbs" id="crumbs" aria-label="Path"></nav>
+    <div class="current" id="current"></div>
+    <ul class="legend" id="legend"></ul>
+    <div id="strip-wrap">
+      <canvas id="strip" role="img" aria-label="Children of the current node, to scale"></canvas>
+      <div id="tooltip" role="tooltip"></div>
+    </div>
+    <div class="ruler"><span id="ruler-start"></span><span id="ruler-note"></span><span id="ruler-end"></span></div>
+    <div class="goto">
+      <label for="offset" class="hint">Go to byte</label>
+      <input id="offset" class="mono" placeholder="0x38 or 56">
+      <button type="button" id="go">Locate</button>
+      <button type="button" id="up">Up</button>
+      <span style="flex:1"></span>
+      <button type="button" id="dl-image">Download image</button>
+      <button type="button" id="dl-json">Download blueprint JSON</button>
+    </div>
+  </section>
+
+  <section class="panel" aria-labelledby="children-title">
+    <h2 id="children-title">Children</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="num">Offset</th><th class="num">Size</th><th>Name</th><th>Kind</th><th>Value</th><th>Meaning</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+    <p class="hint" id="rows-note"></p>
+  </section>
+
+  <section class="panel" aria-labelledby="hex-title">
+    <h2 id="hex-title">Bytes</h2>
+    <p id="selected"></p>
+    <div class="hex-nav">
+      <button type="button" id="hex-prev">◀ Previous</button>
+      <button type="button" id="hex-next">Next ▶</button>
+      <span class="hint" id="hex-range"></span>
+    </div>
+    <div class="hex" id="hex" aria-label="Hex dump of the current node"></div>
+  </section>
+
+  <footer>LFS, the links file system. Source and documentation:
+  <a href="https://github.com/link-foundation/lfs">github.com/link-foundation/lfs</a>.</footer>
+</main>
+</div>
+<script type="module">
+import { Lfs } from "./lfs.mjs";
+
+// Kinds as written by the blueprint (src/fs/blueprint). Colour carries the
+// group (file data, links database, volume metadata, unused space), as on
+// the disk-space map; texture tells the members of a group apart, and the
+// kind is always written out next to it, so identity is never colour alone.
+const KINDS = {
+  file:       { label: "File extent",        color: "--file" },
+  data:       { label: "Data block",         color: "--file", texture: "hatch" },
+  chunk:      { label: "Links chunk",        color: "--links" },
+  record:     { label: "Record",             color: "--links" },
+  link:       { label: "Link cell",          color: "--links" },
+  table:      { label: "Chunk table",        color: "--links", texture: "hatch" },
+  header:     { label: "Header",             color: "--links", texture: "hatch" },
+  tree:       { label: "Index cell",         color: "--links", texture: "dots" },
+  bits:       { label: "Bitstring index",    color: "--links", texture: "dots" },
+  volume:     { label: "Volume",             color: "--meta" },
+  superblock: { label: "Superblock",         color: "--meta" },
+  field:      { label: "Field",              color: "--meta" },
+  journal:    { label: "Journal",            color: "--meta", texture: "hatch" },
+  descriptor: { label: "Array descriptor",   color: "--meta", texture: "dots" },
+  pending:    { label: "Freed at next commit", color: "--pending", texture: "hatch" },
+  slack:      { label: "Slack",              color: "--pending", texture: "dots" },
+  unused:     { label: "Unused",             color: "--free", texture: "dots" },
+  free:       { label: "Free",               color: "--free" },
+};
+const PRESETS = [
+  ["Default", ""],
+  ["Split + adaptive index", "layout=split; index=adaptive"],
+  ["Data-only + bitstring index", "layout=data-only; index=bitstring"],
+  ["Full journal, packed names, tree index", "journal=full; names=packed; index=tree"],
+  ["No journal, compacted", "journal-blocks=0; journal=off; compact=true"],
+  ["1 KiB blocks", "size=1M; block-size=1024"],
+  ["64 KiB blocks", "size=8M; block-size=65536; files=4"],
+];
+const ROW_LIMIT = 2000;
+const HEX_ROWS = 32;
+const GAP = 2;
+
+const $ = (id) => document.getElementById(id);
+const root = document.documentElement;
+const canvas = $("strip");
+const tooltip = $("tooltip");
+const css = (name) => getComputedStyle(document.querySelector(".viz-root")).getPropertyValue(name).trim();
+const fmt = (n) => n.toLocaleString("en-US");
+const hex = (n, width = 0) => `0x${n.toString(16).padStart(width, "0")}`;
+const bytes = (n) => {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return i ? `${n.toFixed(n < 10 ? 1 : 0)} ${units[i]}` : `${n} ${n === 1 ? "byte" : "bytes"}`;
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const kindOf = (kind) => KINDS[kind] || { label: kind, color: "--pending" };
+
+let lfs = null;
+let keys = null;      // { demo, runtime, defaults }
+let defaults = {};    // key -> default value
+let summary = null;   // summary of the open volume
+let path = [];        // child indices of the current node
+let node = null;      // current node, with its children
+let parts = [];       // children to draw (the node itself for a leaf)
+let selected = -1;    // index into parts
+let hovered = -1;
+let hexBase = 0;
+let showAll = false;
+
+function status(message) {
+  $("status").hidden = !message;
+  $("status").textContent = message || "";
+}
+
+// --- textures ------------------------------------------------------------
+
+function pattern(ctx, kind, size) {
+  const k = kindOf(kind);
+  const color = css(k.color);
+  if (!k.texture) return color;
+  const tile = document.createElement("canvas");
+  const s = Math.max(4, Math.round(size));
+  tile.width = tile.height = s;
+  const t = tile.getContext("2d");
+  t.fillStyle = color;
+  t.fillRect(0, 0, s, s);
+  const ink = k.color === "--free" ? css("--pending") : css("--surface-1");
+  if (k.texture === "hatch") {
+    t.strokeStyle = ink;
+    t.lineWidth = Math.max(1, s / 4);
+    t.beginPath();
+    t.moveTo(0, s); t.lineTo(s, 0);
+    t.moveTo(-s / 2, s / 2); t.lineTo(s / 2, -s / 2);
+    t.moveTo(s / 2, s * 1.5); t.lineTo(s * 1.5, s / 2);
+    t.stroke();
+  } else {
+    t.fillStyle = ink;
+    t.beginPath();
+    t.arc(s / 2, s / 2, Math.max(1, s / 6), 0, Math.PI * 2);
+    t.fill();
+  }
+  return ctx.createPattern(tile, "repeat");
+}
+
+function swatch(kind) {
+  const c = document.createElement("canvas");
+  c.className = "swatch";
+  c.width = c.height = 28;
+  const ctx = c.getContext("2d");
+  ctx.fillStyle = pattern(ctx, kind, 10);
+  ctx.fillRect(0, 0, 28, 28);
+  return c;
+}
+
+// --- configuration form --------------------------------------------------
+
+/** The choices a key's help lists, or null for a free-form value. */
+function choices(help) {
+  const head = help.replace(/\s*\(.*\)\s*$/, "");
+  if (head.includes(" | ")) {
+    const list = head.split(" | ").map((s) => s.trim());
+    if (list.every((s) => /^[\w-]+$/.test(s))) return list;
+  }
+  const or = head.match(/(?:^|: )([\w-]+(?:, [\w-]+)* or [\w-]+)$/);
+  if (or) return or[1].split(/, | or /);
+  const pair = help.match(/\((\w+)\/(\w+)\)/);
+  if (pair) return [pair[1], pair[2]];
+  const powers = help.match(/(\d+) to (\d+), a power of two/);
+  if (powers) {
+    const list = [];
+    for (let n = Number(powers[1]); n <= Number(powers[2]); n *= 2) list.push(String(n));
+    return list;
+  }
+  return null;
+}
+
+function buildForm() {
+  const form = $("form");
+  for (const [key, help] of [...keys.demo, ...keys.runtime]) {
+    const label = document.createElement("label");
+    label.title = help;
+    const name = document.createElement("b");
+    name.textContent = key;
+    const list = choices(help);
+    let input;
+    if (list) {
+      input = document.createElement("select");
+      if (!list.includes(defaults[key])) list.unshift(defaults[key]);
+      for (const value of list) input.append(new Option(value, value));
+    } else {
+      input = document.createElement("input");
+      input.placeholder = defaults[key];
+    }
+    input.name = key;
+    input.value = defaults[key];
+    input.addEventListener("input", () => label.classList.toggle("changed", input.value !== defaults[key]));
+    const text = document.createElement("span");
+    text.textContent = help;
+    label.append(name, input, text);
+    form.append(label);
+  }
+}
+
+function parsePairs(text) {
+  const pairs = {};
+  for (const item of text.split(/[;\n]/)) {
+    const at = item.indexOf("=");
+    if (at > 0) pairs[item.slice(0, at).trim()] = item.slice(at + 1).trim();
+  }
+  return pairs;
+}
+
+function setForm(pairs) {
+  for (const input of $("form").elements) {
+    const value = input.name in pairs ? pairs[input.name] : defaults[input.name];
+    if (input.tagName === "SELECT" && ![...input.options].some((o) => o.value === value)) {
+      input.append(new Option(value, value));
+    }
+    input.value = value;
+    input.dispatchEvent(new Event("input"));
+  }
+}
+
+/** The keys that differ from the defaults, as `key=value; ...`. */
+function changedPairs() {
+  return [...$("form").elements]
+    .filter((input) => input.name && input.value !== "" && input.value !== defaults[input.name])
+    .map((input) => `${input.name}=${input.value}`)
+    .join("; ");
+}
+
+function build() {
+  const params = changedPairs();
+  const same = (a, b) => JSON.stringify(Object.entries(parsePairs(a)).sort()) === JSON.stringify(Object.entries(parsePairs(b)).sort());
+  for (const b of $("presets").children) b.setAttribute("aria-pressed", String(same(b.dataset.config, params)));
+  try {
+    show(lfs.demo(params.replaceAll("; ", "\n")), params ? `configured: ${params}` : "default configuration");
+    const url = new URL(location.href);
+    if (params) url.searchParams.set("config", params); else url.searchParams.delete("config");
+    url.searchParams.delete("at");
+    history.replaceState(null, "", url);
+  } catch (error) {
+    status(`Could not build the volume: ${error.message}`);
+  }
+}
+
+// --- volume and navigation -----------------------------------------------
+
+function show(info, source) {
+  status("");
+  summary = info;
+  $("source").textContent = `· ${source}`;
+  const stat = (label, value, sub = "") =>
+    `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
+  const used = info.blocks - info.free;
+  $("stats").innerHTML = [
+    stat("Label", esc(info.label || "—"), `${esc(info.layout)} layout · ${esc(info.note)}`),
+    stat("Image", bytes(info.image_len), `${fmt(info.image_len)} bytes`),
+    stat("Blocks", fmt(info.blocks), `of ${bytes(info.block_size)}`),
+    stat("Used", `${((100 * used) / info.blocks).toFixed(1)}%`, `${fmt(info.free)} blocks free`),
+    stat("Files", fmt(info.files), "inodes in use"),
+    stat("Links", fmt(info.links), "in the embedded database"),
+  ].join("");
+  $("lino").textContent = info.config;
+  go([], -1);
+}
+
+function go(to, select = -1) {
+  try {
+    node = lfs.node(to, 1);
+  } catch (error) {
+    status(`No node at ${to.join("/")}: ${error.message}`);
+    return;
+  }
+  if (!node.expandable && to.length) {
+    go(to.slice(0, -1), to[to.length - 1]);  // a leaf shows as the selected part of its parent
+    return;
+  }
+  path = to;
+  parts = node.children && node.children.length ? node.children : [node];
+  selected = select;
+  hovered = -1;
+  showAll = false;
+  const focus = parts[selected] || node;
+  hexBase = Math.floor(focus.offset / 16) * 16;
+  const url = new URL(location.href);
+  if (path.length) url.searchParams.set("at", path.join("/")); else url.searchParams.delete("at");
+  history.replaceState(null, "", url);
+  render();
+}
+
+function open(index) {
+  const part = parts[index];
+  if (part && part.expandable && part !== node) go([...path, index]);
+  else select(index);
+}
+
+function select(index) {
+  selected = index;
+  const part = parts[index];
+  if (part) hexBase = Math.floor(part.offset / 16) * 16;
+  renderRows();
+  renderHex();
+  drawStrip();
+  const row = $("rows").querySelector(`tr[data-i="${index}"]`);
+  if (row) row.scrollIntoView({ block: "nearest" });
+}
+
+function locate(offset) {
+  if (!summary) return;
+  if (!(offset >= 0 && offset < summary.image_len)) {
+    status(`Byte ${offset} is outside the image (0..${summary.image_len - 1}).`);
+    return;
+  }
+  status("");
+  const found = lfs.locate(offset);
+  if (found.length === 0) go([], -1);
+  else go(found.slice(0, -1), found[found.length - 1]);
+  hexBase = Math.floor(offset / 16) * 16;
+  renderHex(offset);
+}
+
+/** Index of the part holding byte `offset` (parts partition the node). */
+function partAt(offset) {
+  let lo = 0;
+  let hi = parts.length - 1;
+  while (lo < hi) {
+    const mid = (lo + hi + 1) >> 1;
+    if (parts[mid].offset <= offset) lo = mid; else hi = mid - 1;
+  }
+  return lo;
+}
+
+// --- rendering -----------------------------------------------------------
+
+function render() {
+  const crumbs = $("crumbs");
+  crumbs.innerHTML = "";
+  for (let i = 0; i <= path.length; i++) {
+    const at = path.slice(0, i);
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = i === path.length ? node.name : lfs.node(at, 0).name;
+    if (i === path.length) b.setAttribute("aria-current", "location");
+    b.addEventListener("click", () => go(at, i < path.length ? path[i] : -1));
+    if (i) { const sep = document.createElement("span"); sep.textContent = "›"; crumbs.append(sep); }
+    crumbs.append(b);
+  }
+  const k = kindOf(node.kind);
+  $("current").innerHTML =
+    `<div class="title">${esc(node.name)}</div>` +
+    `<div class="meta">${esc(k.label)} · <span class="mono">${hex(node.offset)}–${hex(node.offset + node.size - 1)}</span>` +
+    ` · ${fmt(node.size)} ${node.size === 1 ? "byte" : "bytes"}` +
+    (node.value !== undefined ? ` · value <span class="mono">${esc(node.value)}</span>` : "") +
+    (node.note ? ` · ${esc(node.note)}` : "") + `</div>`;
+  const legend = $("legend");
+  legend.innerHTML = "";
+  const counts = {};
+  for (const part of parts) counts[part.kind] = (counts[part.kind] || 0) + part.size;
+  for (const kind of Object.keys(KINDS).filter((kind) => counts[kind]).concat(Object.keys(counts).filter((kind) => !KINDS[kind]))) {
+    const li = document.createElement("li");
+    const b = document.createElement("b");
+    b.textContent = bytes(counts[kind]);
+    li.append(swatch(kind), `${kindOf(kind).label} `, b);
+    legend.append(li);
+  }
+  $("ruler-start").textContent = hex(node.offset);
+  $("ruler-end").textContent = hex(node.offset + node.size);
+  $("ruler-note").textContent = `${fmt(parts.length)} ${parts.length === 1 ? "part" : "parts"} · to scale · click to open`;
+  $("up").disabled = path.length === 0;
+  renderRows();
+  renderHex();
+  drawStrip();
+}
+
+function drawStrip() {
+  if (!node) return;
+  const width = canvas.parentElement.clientWidth;
+  const height = 40;
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const fills = {};
+  const scale = width / node.size;
+  let lastEnd = -1;
+  parts.forEach((part, i) => {
+    let x0 = (part.offset - node.offset) * scale;
+    let x1 = (part.offset + part.size - node.offset) * scale;
+    if (x1 - x0 > 2 * GAP + 2) x1 -= GAP;      // a surface gap between parts wide enough to keep one
+    if (Math.floor(x0) <= lastEnd && x1 - x0 < 1) return;  // several parts share this pixel
+    x0 = Math.max(x0, lastEnd);
+    x1 = Math.max(x1, x0 + 1);
+    lastEnd = Math.floor(x1);
+    fills[part.kind] ??= pattern(ctx, part.kind, 8);
+    ctx.fillStyle = fills[part.kind];
+    ctx.globalAlpha = (hovered >= 0 && i !== hovered) || (hovered < 0 && selected >= 0 && i !== selected) ? 0.45 : 1;
+    ctx.beginPath();
+    ctx.roundRect(x0, 0, x1 - x0, height, x1 - x0 >= 8 ? 4 : 0);
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+}
+
+function renderRows() {
+  const rows = (showAll ? parts : parts.slice(0, ROW_LIMIT)).map((part, i) => {
+    const k = kindOf(part.kind);
+    const open = part.expandable && part !== node ? ` <span class="open" aria-hidden="true">›</span>` : "";
+    const cls = i === selected ? "selected" : i === hovered ? "hover" : "";
+    return `<tr data-i="${i}" class="${cls}"><td class="num mono">${hex(part.offset)}</td><td class="num">${fmt(part.size)}</td>` +
+      `<td>${esc(part.name)}${open}</td><td class="kind" data-kind="${esc(part.kind)}">${esc(k.label)}</td>` +
+      `<td class="value mono">${esc(part.value ?? "")}</td><td>${esc(part.note ?? "")}</td></tr>`;
+  });
+  $("rows").innerHTML = rows.join("");
+  for (const cell of $("rows").querySelectorAll("td.kind")) cell.prepend(swatch(cell.dataset.kind));
+  const note = $("rows-note");
+  note.innerHTML = "";
+  if (!showAll && parts.length > ROW_LIMIT) {
+    note.textContent = `Showing ${fmt(ROW_LIMIT)} of ${fmt(parts.length)} parts. `;
+    const more = document.createElement("button");
+    more.type = "button";
+    more.textContent = "Show all";
+    more.addEventListener("click", () => { showAll = true; renderRows(); });
+    note.append(more);
+  }
+}
+
+function renderHex(mark = -1) {
+  if (!node) return;
+  const end = node.offset + node.size;
+  const pageEnd = Math.min(hexBase + HEX_ROWS * 16, Math.ceil(end / 16) * 16);
+  const raw = lfs.bytes(hexBase, pageEnd - hexBase);
+  const part = parts[selected];
+  $("selected").innerHTML = part && part !== node
+    ? `Selected <b>${esc(part.name)}</b> (${esc(kindOf(part.kind).label)}) · <span class="mono">${hex(part.offset)}</span> · ${fmt(part.size)} ${part.size === 1 ? "byte" : "bytes"}` +
+      (part.value !== undefined ? ` · value <b class="mono">${esc(part.value)}</b>` : "") +
+      (part.hex ? ` · raw <span class="mono">${esc(part.hex)}</span>` : "") +
+      (part.note ? ` · ${esc(part.note)}` : "")
+    : "Click a part or a byte to select it. The tint under each byte is the part that holds it.";
+  const lines = [];
+  for (let row = hexBase; row < pageEnd; row += 16) {
+    let cells = "";
+    let text = "";
+    for (let o = row; o < row + 16; o++) {
+      const byte = raw[o - hexBase];
+      const inside = o >= node.offset && o < end && byte !== undefined;
+      let cls = inside ? "" : "out";
+      let style = "";
+      if (inside) {
+        const i = partAt(o);
+        const k = kindOf(parts[i].kind);
+        const strength = i === selected ? 55 : i % 2 ? 18 : 30;
+        style = ` style="background:color-mix(in srgb, var(${k.color}) ${strength}%, transparent)"`;
+        if (i === selected) cls += " sel";
+      }
+      if (o === mark) cls += " hl";
+      const shown = byte === undefined ? "  " : byte.toString(16).padStart(2, "0");
+      const ch = byte === undefined ? " " : byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : "·";
+      cells += `<span class="b ${cls}" data-o="${o}"${style}>${shown}</span>${o % 8 === 7 ? " " : ""}`;
+      text += `<span class="a ${cls}" data-o="${o}">${esc(ch)}</span>`;
+    }
+    lines.push(`<div class="row"><span class="addr">${row.toString(16).padStart(8, "0")}</span><span>${cells}</span><span>${text}</span></div>`);
+  }
+  $("hex").innerHTML = lines.join("");
+  $("hex-range").textContent = `${hex(hexBase)}–${hex(pageEnd - 1)} of this node's ${hex(node.offset)}–${hex(end - 1)}`;
+  $("hex-prev").disabled = hexBase <= Math.floor(node.offset / 16) * 16;
+  $("hex-next").disabled = pageEnd >= end;
+}
+
+function download(data, name, type) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// --- events --------------------------------------------------------------
+
+function partUnder(event) {
+  const rect = canvas.getBoundingClientRect();
+  const offset = node.offset + Math.floor(((event.clientX - rect.left) / rect.width) * node.size);
+  return partAt(Math.min(Math.max(offset, node.offset), node.offset + node.size - 1));
+}
+
+canvas.addEventListener("mousemove", (event) => {
+  if (!node) return;
+  const i = partUnder(event);
+  const part = parts[i];
+  const k = kindOf(part.kind);
+  tooltip.innerHTML =
+    `<div><b>${esc(part.name)}</b> · <span class="k">${esc(k.label)}</span></div>` +
+    `<div class="mono">${hex(part.offset)} + ${fmt(part.size)} (${bytes(part.size)})</div>` +
+    (part.value !== undefined ? `<div><span class="k">value</span> <span class="mono">${esc(part.value)}</span></div>` : "") +
+    (part.note ? `<div>${esc(part.note)}</div>` : "") +
+    (part.expandable && part !== node ? `<div class="k">click to open</div>` : "");
+  tooltip.style.display = "block";
+  const wrap = canvas.parentElement.getBoundingClientRect();
+  const left = Math.min(event.clientX - wrap.left + 14, wrap.width - tooltip.offsetWidth - 4);
+  tooltip.style.left = `${Math.max(0, left)}px`;
+  tooltip.style.top = `${event.clientY - wrap.top + 18}px`;
+  if (hovered !== i) { hovered = i; drawStrip(); }
+});
+canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; hovered = -1; drawStrip(); });
+canvas.addEventListener("click", (event) => { if (node) open(partUnder(event)); });
+$("rows").addEventListener("click", (event) => {
+  const row = event.target.closest("tr");
+  if (row) open(Number(row.dataset.i));
+});
+$("rows").addEventListener("mouseover", (event) => {
+  const row = event.target.closest("tr");
+  const i = row ? Number(row.dataset.i) : -1;
+  if (i !== hovered) { hovered = i; drawStrip(); }
+});
+$("rows").addEventListener("mouseleave", () => { hovered = -1; drawStrip(); });
+$("hex").addEventListener("click", (event) => {
+  const cell = event.target.closest("[data-o]");
+  if (cell) locate(Number(cell.dataset.o));
+});
+$("hex-prev").addEventListener("click", () => { hexBase = Math.max(0, hexBase - HEX_ROWS * 16); renderHex(); });
+$("hex-next").addEventListener("click", () => { hexBase += HEX_ROWS * 16; renderHex(); });
+$("up").addEventListener("click", () => { if (path.length) go(path.slice(0, -1), path[path.length - 1]); });
+const goto = () => {
+  const text = $("offset").value.trim().toLowerCase();
+  const value = text.startsWith("0x") ? parseInt(text.slice(2), 16) : Number(text);
+  if (text === "" || !Number.isInteger(value)) status(`Not an offset: ${text}`);
+  else locate(value);
+};
+$("go").addEventListener("click", goto);
+$("offset").addEventListener("keydown", (event) => { if (event.key === "Enter") goto(); });
+$("dl-image").addEventListener("click", () => {
+  if (summary) download(lfs.image(), `${summary.label || "volume"}.img`, "application/octet-stream");
+});
+$("dl-json").addEventListener("click", () => {
+  if (node) download(JSON.stringify(lfs.node(path, 64), null, 1), `blueprint${path.length ? `-${path.join("-")}` : ""}.json`, "application/json");
+});
+$("form").addEventListener("submit", (event) => { event.preventDefault(); build(); });
+$("reset").addEventListener("click", () => { setForm({}); build(); });
+$("share").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(location.href);
+    $("share").textContent = "Copied";
+  } catch {
+    $("share").textContent = "Copy the address bar";
+  }
+  setTimeout(() => { $("share").textContent = "Copy link"; }, 1500);
+});
+
+function openFile(file) {
+  file.arrayBuffer().then((buffer) => {
+    try {
+      show(lfs.open(new Uint8Array(buffer)), file.name);
+      for (const b of $("presets").children) b.setAttribute("aria-pressed", "false");
+    } catch (error) {
+      status(`${file.name} is not an LFS image: ${error.message}`);
+    }
+  });
+}
+$("file").addEventListener("change", (event) => { if (event.target.files[0]) openFile(event.target.files[0]); });
+const drop = $("drop");
+drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("drag"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("drag");
+  if (event.dataTransfer.files[0]) openFile(event.dataTransfer.files[0]);
+});
+$("theme").addEventListener("click", () => {
+  const dark = root.dataset.theme
+    ? root.dataset.theme === "dark"
+    : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  if (node) render();
+});
+window.addEventListener("resize", () => drawStrip());
+
+// --- start ---------------------------------------------------------------
+
+try {
+  lfs = await Lfs.load();
+} catch (error) {
+  status(`Could not load lfs.wasm (${error.message}). Build it with: bash docs/visualizer/build-wasm.sh`);
+  for (const control of document.querySelectorAll("button, input, select")) control.disabled = control.id !== "theme";
+}
+if (lfs) {
+  keys = lfs.keys();
+  defaults = parsePairs(keys.defaults);
+  buildForm();
+  for (const [title, config] of PRESETS) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.textContent = title;
+    b.dataset.config = config;
+    b.setAttribute("aria-pressed", "false");
+    b.addEventListener("click", () => { setForm(parsePairs(config)); build(); });
+    $("presets").append(b);
+  }
+  const params = new URLSearchParams(location.search);
+  const at = params.get("at");
+  setForm(parsePairs(params.get("config") || ""));
+  build();
+  if (at) go(at.split("/").filter(Boolean).map(Number));
+}
+</script>
+</body>
+</html>

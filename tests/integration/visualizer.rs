@@ -95,6 +95,86 @@ fn the_page_knows_every_kind_and_loads_the_samples() {
 fn pages_deploy_the_visualizer() {
     let release = read(".github/workflows/release.yml");
     assert!(release.contains("cp -r docs/visualizer target/doc/visualizer"));
+    // The blueprint page needs lfs.wasm, which is built, not committed: once
+    // before deploying and once in the job that checks pull requests.
+    assert!(
+        release
+            .matches("bash docs/visualizer/build-wasm.sh")
+            .count()
+            >= 2
+    );
+    assert!(
+        release
+            .matches("node --test docs/visualizer/lfs.test.mjs")
+            .count()
+            >= 2
+    );
+    assert!(read(".gitignore").contains("docs/visualizer/lfs.wasm"));
+}
+
+/// Every kind in the blueprint of `config`'s demo volume, expanded fully.
+fn blueprint_kinds(config: &str, kinds: &mut std::collections::BTreeSet<&'static str>) {
+    fn walk(
+        node: &links_fs::fs::blueprint::Node,
+        kinds: &mut std::collections::BTreeSet<&'static str>,
+    ) {
+        kinds.insert(node.kind);
+        for child in &node.children {
+            walk(child, kinds);
+        }
+    }
+    let text = format!("size=1M; block-size=1024; files=10; file-size=3000; {config}");
+    let mut fs = links_fs::demo::Demo::parse(&text).unwrap().build().unwrap();
+    walk(&fs.blueprint(usize::MAX).unwrap(), kinds);
+}
+
+#[test]
+fn the_blueprint_page_styles_every_kind_and_runs_lfs() {
+    let page = read("docs/visualizer/blueprint.html");
+    let mut kinds = std::collections::BTreeSet::new();
+    for config in [
+        "layout=united; index=adaptive; bitstring-threshold=0.05",
+        "layout=split; index=tree; delete-percent=50",
+        "layout=data-only; index=bitstring",
+        "layout=united; names=packed; journal=full",
+    ] {
+        blueprint_kinds(config, &mut kinds);
+    }
+    for required in [
+        "volume",
+        "superblock",
+        "field",
+        "link",
+        "tree",
+        "bits",
+        "data",
+    ] {
+        assert!(kinds.contains(required), "no {required} in {kinds:?}");
+    }
+    for kind in kinds {
+        let key = format!("\n  {kind}:");
+        assert!(
+            page.contains(&key),
+            "blueprint.html has no style for {kind}"
+        );
+    }
+    assert!(page.contains("from \"./lfs.mjs\""));
+    assert!(read("docs/visualizer/index.html").contains("href=\"blueprint.html\""));
+    let wrapper = read("docs/visualizer/lfs.mjs");
+    for export in [
+        "lfs_keys",
+        "lfs_demo",
+        "lfs_open",
+        "lfs_node",
+        "lfs_locate",
+        "lfs_bytes",
+    ] {
+        assert!(wrapper.contains(export), "{export}");
+        assert!(
+            read("src/wasm.rs").contains(&format!("fn {export}(")),
+            "{export}"
+        );
+    }
 }
 
 #[test]

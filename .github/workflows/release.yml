@@ -649,6 +649,60 @@ jobs:
         # broken suite does not hide the state of the others.
         run: bash scripts/test-scripts.sh
 
+  # === WEBASSEMBLY BLUEPRINT ===
+  # docs/visualizer/blueprint.html runs LFS itself, compiled to WebAssembly
+  # (src/wasm.rs), to format, open and walk a volume byte by byte. Build it the
+  # way Pages does and check it from Node so a broken export never deploys.
+  wasm:
+    name: WebAssembly Blueprint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref }}-wasm
+      cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+    needs: [detect-changes, cargo-lock]
+    if: |
+      !cancelled() && (
+        needs.cargo-lock.result == 'success' && (
+          github.event_name == 'workflow_dispatch' ||
+          needs.detect-changes.outputs.any-code-changed == 'true' ||
+          needs.detect-changes.outputs.docs-changed == 'true' ||
+          needs.detect-changes.outputs.workflow-changed == 'true'
+        )
+      )
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@7e38f4b43b4db5c8dd498af069a4f6196df1d067 # master branch @ 2026-10-01
+        with:
+          # The `stable` ref is what supplied the action's default toolchain;
+          # once pinned to a hash the input has to be restated explicitly.
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-wasm-
+
+      - name: Clippy for wasm32
+        run: cargo clippy --lib --target wasm32-unknown-unknown --no-default-features
+
+      - name: Build lfs.wasm
+        run: bash docs/visualizer/build-wasm.sh
+
+      - name: Test lfs.wasm from Node
+        run: node --test docs/visualizer/lfs.test.mjs
+
   # === CODE COVERAGE ===
   # Generate and upload code coverage using cargo-llvm-cov
   coverage:
@@ -1322,6 +1376,13 @@ jobs:
           sed "s#__REPOSITORY__#$REPOSITORY#g" \
             docs/download/index.html > target/doc/download/index.html
 
+      - name: Build the blueprint's WebAssembly
+        # blueprint.html loads lfs.wasm, which is built here, not committed.
+        run: |
+          rustup target add wasm32-unknown-unknown
+          bash docs/visualizer/build-wasm.sh
+          node --test docs/visualizer/lfs.test.mjs
+
       - name: Add disk-space map visualizer
         # A static page with its sample maps; regenerate the samples with
         # docs/visualizer/make-samples.sh.
@@ -1361,6 +1422,7 @@ jobs:
       - lint
       - test
       - script-tests
+      - wasm
       - coverage
       - build
       - auto-release

@@ -114,7 +114,9 @@ a { color: inherit; }
   <p class="lead">Every block of an LFS volume: the superblock, the journal, the chunks and
   chunk tables of the embedded links database, the one contiguous extent of each file, and the
   free gaps between them. Produce a map of your own volume with
-  <code>lfs map &lt;image&gt; -o map.json</code> and drop it here.</p>
+  <code>lfs map &lt;image&gt; -o map.json</code> and drop it here. To see how every byte is
+  arranged, down to single fields of each link, open the
+  <a href="blueprint.html">byte-level blueprint</a>.</p>
 
   <div class="controls" role="toolbar" aria-label="Map source">
     <button type="button" data-sample="sample-map.json" aria-pressed="true">Sample: with gaps</button>
