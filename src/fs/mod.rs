@@ -28,6 +28,7 @@
 //! compacting the volume. Link, inode and index chunks fill the gaps between
 //! files, so the volume never fragments.
 
+pub mod blueprint;
 mod check;
 mod commit;
 mod control;
@@ -62,6 +63,7 @@ use crate::superblock::{
 use crate::varstore::VarStore;
 use inode::Inodes;
 use std::collections::{BTreeMap, HashMap};
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Type point of regular files.
@@ -80,11 +82,43 @@ pub const ROOT_INO: u64 = 1;
 pub const MIN_BLOCKS: u64 = 16;
 
 /// Current time in nanoseconds since the Unix epoch.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn now() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_nanos() as i64)
+}
+
+/// The clock of the WebAssembly build, which has no system clock: the host
+/// page sets it with [`set_wasm_clock`].
+#[cfg(target_arch = "wasm32")]
+static WASM_CLOCK: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// Sets the current time (ns since the Unix epoch) of the WebAssembly build.
+#[cfg(target_arch = "wasm32")]
+pub fn set_wasm_clock(ns: i64) {
+    WASM_CLOCK.store(ns, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Current time in nanoseconds since the Unix epoch (as set by the host).
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn now() -> i64 {
+    WASM_CLOCK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A per-process value mixed into volume identifiers.
+#[cfg(not(target_arch = "wasm32"))]
+fn process_salt() -> u64 {
+    u64::from(std::process::id())
+}
+
+/// A per-process value mixed into volume identifiers (WebAssembly has no
+/// process identifiers).
+#[cfg(target_arch = "wasm32")]
+const fn process_salt() -> u64 {
+    0
 }
 
 /// Attributes of a file, as reported to the operating system.
@@ -306,7 +340,7 @@ impl<D: BlockDevice> Fs<D> {
         let root = links.create(DIR, external(slot))?;
         let config = RuntimeConfig::default();
         let mut volume_id = [0u8; 16];
-        let seed = created as u64 ^ (u64::from(std::process::id()) << 32) ^ total;
+        let seed = created as u64 ^ (process_salt() << 32) ^ total;
         for (index, byte) in volume_id.iter_mut().enumerate() {
             *byte = (seed.rotate_left(index as u32 * 7) >> (index % 8)) as u8 ^ index as u8;
         }

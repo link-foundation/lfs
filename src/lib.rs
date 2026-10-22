@@ -8,6 +8,7 @@ struct ReadmeDoctests;
 pub mod chunked;
 pub mod codec;
 pub mod config;
+pub mod demo;
 pub mod device;
 pub mod driver;
 pub mod error;

@@ -85,7 +85,7 @@ const fn kind_name(owner: Owner) -> &'static str {
     }
 }
 
-fn json_string(out: &mut String, text: &str) {
+pub(super) fn json_string(out: &mut String, text: &str) {
     out.push('"');
     for c in text.chars() {
         match c {

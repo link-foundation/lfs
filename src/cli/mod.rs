@@ -5,6 +5,7 @@ mod mount;
 
 use crate::{Cli, Command, LinkAction};
 use links_fs::config::{FormatOptions, Layout, NameEncoding, RUNTIME_KEYS};
+use links_fs::demo::{Demo, DEMO_KEYS};
 use links_fs::device::FileDevice;
 use links_fs::error::Error;
 use links_fs::fs::{Creator, FileKind, Fs, ROOT_INO};
@@ -87,6 +88,53 @@ pub fn parse_size(text: &str) -> std::result::Result<u64, String> {
 /// Parses a link reference: `12` or `$7`.
 pub fn parse_link_ref(text: &str) -> std::result::Result<u64, String> {
     parse_ref(text).map_err(|error| error.to_string())
+}
+
+/// Parses a blueprint depth: a number or `all`.
+pub fn parse_depth(text: &str) -> std::result::Result<usize, String> {
+    if text == "all" {
+        Ok(usize::MAX)
+    } else {
+        text.parse()
+            .map_err(|_| format!("bad depth {text:?} (a number or all)"))
+    }
+}
+
+/// The demo keys, for `lfs demo --help`.
+pub fn demo_help() -> String {
+    let out = DEMO_KEYS
+        .iter()
+        .fold(String::from("Demo keys:\n"), |mut out, (key, help)| {
+            let _ = writeln!(out, "  {key:<22} {help}");
+            out
+        });
+    format!("{out}\nAny runtime key (see `lfs config --help`) is accepted too.")
+}
+
+/// Parses `--at`: child indices (`3/0/2`) or `@OFFSET`.
+fn blueprint_path<D: links_fs::device::BlockDevice>(
+    fs: &mut Fs<D>,
+    at: Option<&str>,
+) -> Outcome<Vec<usize>> {
+    let Some(at) = at else {
+        return Ok(Vec::new());
+    };
+    if let Some(offset) = at.strip_prefix('@') {
+        let offset = offset
+            .strip_prefix("0x")
+            .map_or_else(|| offset.parse(), |hex| u64::from_str_radix(hex, 16))
+            .map_err(|_| Failure::Message(format!("bad offset {offset:?}")))?;
+        return fs
+            .blueprint_locate(offset)
+            .context(|| format!("locating byte {offset}"));
+    }
+    at.split('/')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            part.parse()
+                .map_err(|_| Failure::Message(format!("bad blueprint path {at:?}")))
+        })
+        .collect()
 }
 
 /// The runtime keys, for `lfs config --help`.
@@ -439,6 +487,63 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
                 output.as_deref().unwrap_or_else(|| Path::new("-")),
                 fs.map_json().as_bytes(),
             )?;
+        }
+        Command::Blueprint {
+            image,
+            depth,
+            at,
+            json,
+            hex,
+        } => {
+            let mut fs = open(&image, false, &set)?;
+            let path = blueprint_path(&mut fs, at.as_deref())?;
+            let mut node = fs
+                .blueprint_at(&path, depth)
+                .context(|| "dissecting".into())?;
+            if json {
+                if hex > 0 {
+                    fs.blueprint_hex(&mut node, hex)
+                        .context(|| "reading".into())?;
+                }
+                let mut text = node.to_json();
+                text.push('\n');
+                write_output(Path::new("-"), text.as_bytes())?;
+            } else {
+                if !path.is_empty() {
+                    let path: Vec<String> = path.iter().map(ToString::to_string).collect();
+                    print_lines([format!("at {}", path.join("/"))])?;
+                }
+                print_lines(node.to_text().lines().map(str::to_string))?;
+            }
+        }
+        Command::Demo {
+            image,
+            params,
+            force,
+        } => {
+            if !force && image.exists() {
+                return Err(Failure::Message(format!(
+                    "{} exists (use --force to overwrite it)",
+                    image.display()
+                )));
+            }
+            let mut demo = Demo::parse(&params.join("\n")).context(|| "parameters".into())?;
+            for (key, value) in &set {
+                demo.set(key, value).context(|| key.clone())?;
+            }
+            let fs = demo.build().context(|| "building the demo".into())?;
+            let stats = fs.statfs();
+            let bytes = fs.close().context(|| "committing".into())?.into_bytes();
+            std::fs::write(&image, bytes).context(|| format!("writing {}", image.display()))?;
+            print_lines([format!(
+                "created {}: {} blocks of {} bytes, {} free, {} files, {} links",
+                image.display(),
+                stats.blocks,
+                stats.block_size,
+                stats.free,
+                stats.files,
+                stats.links
+            )])?;
         }
         Command::Fsck { image } => {
             let fs = open(&image, false, &set)?;

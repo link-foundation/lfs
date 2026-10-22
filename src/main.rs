@@ -67,6 +67,39 @@ pub enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// Dissects the image byte by byte: regions, records, fields.
+    ///
+    /// Every node covers exactly the bytes of its children, down to one-byte
+    /// fields, so the leaves partition the whole image.
+    Blueprint {
+        /// Image file or device.
+        image: PathBuf,
+        /// Levels to expand below the starting node (`all` for everything).
+        #[arg(long, default_value = "2", value_parser = cli::parse_depth)]
+        depth: usize,
+        /// Start at this node: a path of child indices (`3/0/2`) or `@OFFSET`
+        /// for the deepest node holding that byte (`@4096`, `@0x1000`).
+        #[arg(long)]
+        at: Option<String>,
+        /// Write JSON instead of text.
+        #[arg(long)]
+        json: bool,
+        /// Include the bytes of nodes up to this size as hex (JSON only).
+        #[arg(long, default_value_t = 0)]
+        hex: u64,
+    },
+    /// Creates an image with a reproducible demo workload, for exploring
+    /// any configuration (`lfs demo demo.img layout=split index=adaptive`).
+    #[command(after_help = cli::demo_help())]
+    Demo {
+        /// Image file to create.
+        image: PathBuf,
+        /// `key=value` parameters: format options, workload and runtime keys.
+        params: Vec<String>,
+        /// Overwrite an existing file.
+        #[arg(long)]
+        force: bool,
+    },
     /// Checks every invariant of a volume (exit code 1 if anything is wrong).
     Fsck {
         /// Image file or device.
