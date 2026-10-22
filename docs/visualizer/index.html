@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LFS disk-space map</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 4 4%22%3E%3Crect width=%224%22 height=%224%22 fill=%22%232a78d6%22/%3E%3Crect x=%222%22 width=%222%22 height=%222%22 fill=%22%23eb6834%22/%3E%3C/svg%3E">
+<style>
+.viz-root {
+  color-scheme: light;
+  --surface-0: #f3f2ef;
+  --surface-1: #fcfcfb;
+  --border: #dcdbd6;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #77766f;
+  --file: #2a78d6;
+  --links: #eb6834;
+  --meta: #1baf7a;
+  --free: #e6e5e0;
+  --pending: #a8a7a0;
+  --focus: #0b0b0b;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    color-scheme: dark;
+    --surface-0: #121211;
+    --surface-1: #1a1a19;
+    --border: #3a3a37;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #9a998f;
+    --file: #3987e5;
+    --links: #d95926;
+    --meta: #199e70;
+    --free: #2c2c2a;
+    --pending: #6b6a64;
+    --focus: #f0efec;
+  }
+}
+:root[data-theme="dark"] .viz-root {
+  color-scheme: dark;
+  --surface-0: #121211;
+  --surface-1: #1a1a19;
+  --border: #3a3a37;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #9a998f;
+  --file: #3987e5;
+  --links: #d95926;
+  --meta: #199e70;
+  --free: #2c2c2a;
+  --pending: #6b6a64;
+  --focus: #f0efec;
+}
+* { box-sizing: border-box; }
+body { margin: 0; }
+.viz-root {
+  min-height: 100vh;
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  padding: 24px;
+}
+main { max-width: 1180px; margin: 0 auto; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+.lead { color: var(--text-secondary); margin: 0 0 20px; max-width: 70ch; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+.controls button, .controls label.file {
+  font: inherit; color: var(--text-primary); background: var(--surface-1);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; cursor: pointer;
+}
+.controls button[aria-pressed="true"] { border-color: var(--text-primary); font-weight: 600; }
+.controls button:focus-visible, .controls label.file:focus-within { outline: 2px solid var(--focus); outline-offset: 2px; }
+.controls input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.controls .hint { color: var(--text-muted); }
+.panel { background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.panel.drag { outline: 2px dashed var(--text-secondary); outline-offset: -6px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+.stat .label { color: var(--text-secondary); font-size: 12px; }
+.stat .value { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat .sub { color: var(--text-muted); font-size: 12px; }
+.meter { height: 8px; border-radius: 4px; background: var(--free); overflow: hidden; margin-top: 6px; display: flex; gap: 2px; }
+.meter span { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 12px; padding: 0; list-style: none; color: var(--text-secondary); }
+.legend li { display: flex; align-items: center; gap: 6px; }
+.legend canvas { width: 14px; height: 14px; border-radius: 3px; }
+.legend b { color: var(--text-primary); font-weight: 600; font-variant-numeric: tabular-nums; }
+#map-wrap { position: relative; }
+#map { display: block; width: 100%; cursor: crosshair; }
+#tooltip {
+  position: absolute; pointer-events: none; display: none; z-index: 2;
+  background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 10px; font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+  max-width: 320px; white-space: nowrap;
+}
+#tooltip .k { color: var(--text-secondary); }
+#tooltip .path { font-weight: 600; white-space: normal; word-break: break-all; }
+.scale { color: var(--text-muted); font-size: 12px; margin-top: 8px; }
+details summary { cursor: pointer; color: var(--text-secondary); }
+table { border-collapse: collapse; width: 100%; font-size: 12px; margin-top: 8px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+th { color: var(--text-secondary); font-weight: 600; }
+td.num, th.num { text-align: right; }
+.error { color: #d03b3b; }
+footer { color: var(--text-muted); font-size: 12px; }
+a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+<main>
+  <h1>LFS disk-space map</h1>
+  <p class="lead">Every block of an LFS volume: the superblock, the journal, the chunks and
+  chunk tables of the embedded links database, the one contiguous extent of each file, and the
+  free gaps between them. Produce a map of your own volume with
+  <code>lfs map &lt;image&gt; -o map.json</code> and drop it here.</p>
+
+  <div class="controls" role="toolbar" aria-label="Map source">
+    <button type="button" data-sample="sample-map.json" aria-pressed="true">Sample: with gaps</button>
+    <button type="button" data-sample="sample-compacted.json" aria-pressed="false">Sample: after <code>lfs compact</code></button>
+    <label class="file">Open map.json…<input type="file" id="file" accept=".json,application/json"></label>
+    <button type="button" id="theme" aria-label="Toggle dark mode">Theme</button>
+    <span class="hint">or drop a file on the map · <code>?map=URL</code></span>
+  </div>
+
+  <section class="panel" aria-labelledby="stats-title">
+    <h2 id="stats-title" class="stat label" style="margin:0 0 10px;font-size:13px">Volume <span id="source"></span></h2>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <section class="panel" id="drop" aria-labelledby="map-title">
+    <h2 id="map-title" style="margin:0 0 10px;font-size:15px">Blocks</h2>
+    <ul class="legend" id="legend"></ul>
+    <div id="map-wrap">
+      <canvas id="map" role="img" aria-label="Block map"></canvas>
+      <div id="tooltip" role="tooltip"></div>
+    </div>
+    <div class="scale" id="scale"></div>
+  </section>
+
+  <section class="panel">
+    <details>
+      <summary>Extent table</summary>
+      <table>
+        <thead><tr><th class="num">Start</th><th class="num">Blocks</th><th>Kind</th><th>Owner</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </details>
+  </section>
+
+  <footer>LFS — the links file system. Source and documentation:
+  <a href="https://github.com/link-foundation/lfs">github.com/link-foundation/lfs</a>.</footer>
+</main>
+</div>
+<script>
+"use strict";
+// Kinds as written by `lfs map` (src/fs/map.rs). Colour carries the group;
+// texture tells the members of a group apart, so identity is never colour alone.
+const KINDS = {
+  file:       { label: "File data",          color: "--file" },
+  chunk:      { label: "Links chunk",        color: "--links" },
+  table:      { label: "Chunk table",        color: "--links", hatch: true },
+  journal:    { label: "Journal",            color: "--meta" },
+  superblock: { label: "Superblock",         color: "--meta", hatch: true },
+  pending:    { label: "Freed at next commit", color: "--pending", hatch: true },
+  free:       { label: "Free",               color: "--free" },
+};
+const ORDER = ["file", "chunk", "table", "journal", "superblock", "pending", "free"];
+const MAX_CELLS = 8192;
+const GAP = 1;
+
+const root = document.documentElement;
+const canvas = document.getElementById("map");
+const tooltip = document.getElementById("tooltip");
+let map = null;     // parsed map
+let cells = [];     // per cell: index into map.extents (dominant), or -1
+let layout = null;  // { cols, rows, size, per }
+
+const css = (name) => getComputedStyle(document.querySelector(".viz-root")).getPropertyValue(name).trim();
+const fmt = (n) => n.toLocaleString("en-US");
+const bytes = (n) => {
+  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return `${i ? n.toFixed(n < 10 ? 1 : 0) : n} ${units[i]}`;
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+function validate(data) {
+  if (!data || data.format !== "lfs-map" || !Array.isArray(data.extents)) {
+    throw new Error("not an LFS map (expected the JSON written by `lfs map`)");
+  }
+  if (data.version !== 1) throw new Error(`unsupported map version ${data.version}`);
+  data.extents.sort((a, b) => a.start - b.start);
+  return data;
+}
+
+function owner(e) {
+  if (e.kind === "file") return e.path ? `${e.path} (inode ${e.ino}, ${bytes(e.size)})` : `inode ${e.ino}`;
+  if (e.kind === "chunk") return `${e.array} array, chunk ${e.chunk}`;
+  if (e.kind === "table") return `${e.array} array`;
+  return "";
+}
+
+function hatchPattern(ctx, color, size) {
+  const tile = document.createElement("canvas");
+  const s = Math.max(4, Math.round(size / 2));
+  tile.width = tile.height = s;
+  const t = tile.getContext("2d");
+  t.fillStyle = color;
+  t.fillRect(0, 0, s, s);
+  t.strokeStyle = css("--surface-1");
+  t.lineWidth = Math.max(1, s / 4);
+  t.beginPath();
+  t.moveTo(0, s); t.lineTo(s, 0);
+  t.moveTo(-s / 2, s / 2); t.lineTo(s / 2, -s / 2);
+  t.moveTo(s / 2, s * 1.5); t.lineTo(s * 1.5, s / 2);
+  t.stroke();
+  return ctx.createPattern(tile, "repeat");
+}
+
+function fillFor(ctx, kind, size) {
+  const k = KINDS[kind] || KINDS.free;
+  const color = css(k.color);
+  return k.hatch ? hatchPattern(ctx, color, size) : color;
+}
+
+function computeCells() {
+  const total = map.total_blocks;
+  const per = Math.max(1, Math.ceil(total / MAX_CELLS));
+  const count = Math.ceil(total / per);
+  cells = new Array(count).fill(-1);
+  // The dominant extent of each cell (most blocks; ties keep the first).
+  const best = new Array(count).fill(0);
+  map.extents.forEach((e, i) => {
+    let block = e.start;
+    const end = Math.min(e.start + e.len, total);
+    while (block < end) {
+      const cell = Math.floor(block / per);
+      const cellEnd = Math.min((cell + 1) * per, end);
+      const n = cellEnd - block;
+      if (n > best[cell]) { best[cell] = n; cells[cell] = i; }
+      block = cellEnd;
+    }
+  });
+  return per;
+}
+
+function draw(highlight = -1) {
+  if (!map) return;
+  const width = canvas.parentElement.clientWidth;
+  const per = layout ? layout.per : computeCells();
+  const count = cells.length;
+  // Square cells as large as fit, between 4 and 18 CSS pixels.
+  let size = Math.floor(Math.sqrt((width * 420) / count));
+  size = Math.max(4, Math.min(18, size));
+  const cols = Math.max(1, Math.floor((width + GAP) / (size + GAP)));
+  const rows = Math.ceil(count / cols);
+  layout = { cols, rows, size, per };
+  const dpr = window.devicePixelRatio || 1;
+  const height = rows * (size + GAP);
+  canvas.style.height = `${height}px`;
+  canvas.width = Math.round(width * dpr);
+  canvas.height = Math.round(height * dpr);
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, width, height);
+  const fills = {};
+  for (const kind of ORDER) fills[kind] = fillFor(ctx, kind, size);
+  const unknown = css("--free");
+  const radius = size >= 8 ? 2 : 0;
+  // Cells of one extent join into a run; a 1px gap separates extents.
+  for (let c = 0; c < count; c++) {
+    const x = (c % cols) * (size + GAP);
+    const y = Math.floor(c / cols) * (size + GAP);
+    const e = map.extents[cells[c]];
+    const joinsLeft = c % cols !== 0 && cells[c - 1] === cells[c];
+    const joinsRight = (c + 1) % cols !== 0 && cells[c + 1] === cells[c];
+    ctx.fillStyle = e ? fills[e.kind] || unknown : unknown;
+    ctx.globalAlpha = highlight >= 0 && cells[c] !== highlight ? 0.35 : 1;
+    const w = size + (joinsRight ? GAP : 0);
+    if (radius) {
+      const r = [joinsLeft ? 0 : radius, joinsRight ? 0 : radius, joinsRight ? 0 : radius, joinsLeft ? 0 : radius];
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, size, r);
+      ctx.fill();
+    } else {
+      ctx.fillRect(x, y, w, size);
+    }
+  }
+  ctx.globalAlpha = 1;
+  document.getElementById("scale").textContent =
+    `${fmt(map.total_blocks)} blocks of ${bytes(map.block_size)}` +
+    (per > 1 ? ` · each cell is ${fmt(per)} blocks and shows the extent that covers most of it` : " · one cell per block") +
+    " · hover a cell for details";
+}
+
+function renderStats() {
+  const s = map;
+  const used = s.total_blocks - s.free_blocks;
+  const kindBlocks = {};
+  for (const e of s.extents) kindBlocks[e.kind] = (kindBlocks[e.kind] || 0) + e.len;
+  const stat = (label, value, sub = "", extra = "") =>
+    `<div class="stat"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div>${extra}</div>`;
+  const meter = `<div class="meter" aria-hidden="true">${["file", "chunk", "table", "journal", "superblock", "pending"]
+    .filter((k) => kindBlocks[k])
+    .map((k) => `<span style="width:${(100 * kindBlocks[k]) / s.total_blocks}%;background:var(${KINDS[k].color})"></span>`)
+    .join("")}</div>`;
+  const fragments = s.free_extents <= 1 ? "one free extent" : `${fmt(s.free_extents)} free extents`;
+  document.getElementById("stats").innerHTML = [
+    stat("Label", esc(s.label || "—"), `${esc(s.layout)} layout · journal ${esc(s.journal)}`),
+    stat("Used", `${((100 * used) / s.total_blocks).toFixed(1)}%`, `${bytes(used * s.block_size)} of ${bytes(s.total_blocks * s.block_size)}`, meter),
+    stat("Free", bytes(s.free_blocks * s.block_size), `${fmt(s.free_blocks)} blocks · ${fragments}`),
+    stat("Largest free extent", bytes(s.largest_free * s.block_size),
+      s.free_blocks ? `${((100 * s.largest_free) / s.free_blocks).toFixed(0)}% of the free space` : "volume full"),
+    stat("Files", fmt(s.files), `${fmt(s.links)} links in the database`),
+    stat("Commit", fmt(s.seq), s.journal_blocks ? `${fmt(s.journal_blocks)} journal blocks` : "no journal"),
+  ].join("");
+  const legend = document.getElementById("legend");
+  legend.innerHTML = "";
+  for (const kind of ORDER) {
+    if (!kindBlocks[kind] && kind !== "free") continue;
+    const li = document.createElement("li");
+    const swatch = document.createElement("canvas");
+    swatch.width = swatch.height = 28;
+    const ctx = swatch.getContext("2d");
+    ctx.fillStyle = fillFor(ctx, kind, 14);
+    ctx.fillRect(0, 0, 28, 28);
+    li.append(swatch, `${KINDS[kind].label} `);
+    const b = document.createElement("b");
+    b.textContent = fmt(kindBlocks[kind] || 0);
+    li.append(b);
+    legend.append(li);
+  }
+  document.getElementById("rows").innerHTML = s.extents
+    .map((e) => `<tr><td class="num">${fmt(e.start)}</td><td class="num">${fmt(e.len)}</td><td>${esc((KINDS[e.kind] || { label: e.kind }).label)}</td><td>${esc(owner(e))}</td></tr>`)
+    .join("");
+}
+
+function show(data, source) {
+  try {
+    map = validate(data);
+  } catch (error) {
+    document.getElementById("stats").innerHTML = `<p class="error">${esc(error.message)}</p>`;
+    return;
+  }
+  layout = null;
+  tooltip.style.display = "none";
+  document.getElementById("source").textContent = `· ${source}`;
+  renderStats();
+  draw();
+}
+
+async function load(url) {
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    show(await response.json(), url.split("/").pop());
+  } catch (error) {
+    document.getElementById("stats").innerHTML = `<p class="error">Could not load ${esc(url)}: ${esc(error.message)}</p>`;
+  }
+}
+
+function readFile(file) {
+  file.text().then((text) => show(JSON.parse(text), file.name))
+    .catch((error) => show(null, `${file.name}: ${error.message}`));
+  for (const b of document.querySelectorAll("[data-sample]")) b.setAttribute("aria-pressed", "false");
+}
+
+canvas.addEventListener("mousemove", (event) => {
+  if (!layout) return;
+  const rect = canvas.getBoundingClientRect();
+  const x = event.clientX - rect.left;
+  const y = event.clientY - rect.top;
+  const col = Math.floor(x / (layout.size + GAP));
+  const row = Math.floor(y / (layout.size + GAP));
+  const cell = row * layout.cols + col;
+  if (col >= layout.cols || cell < 0 || cell >= cells.length || cells[cell] < 0) {
+    tooltip.style.display = "none";
+    draw();
+    return;
+  }
+  const e = map.extents[cells[cell]];
+  const first = cell * layout.per;
+  const block = layout.per > 1 ? `blocks ${fmt(first)}–${fmt(Math.min(first + layout.per, map.total_blocks) - 1)}` : `block ${fmt(first)}`;
+  const k = KINDS[e.kind] || { label: e.kind };
+  let html = `<div><b>${esc(k.label)}</b> · <span class="k">${block}</span></div>`;
+  if (e.kind === "file") html += `<div class="path">${esc(e.path || "(unnamed)")}</div><div><span class="k">inode</span> ${e.ino} · ${bytes(e.size)}</div>`;
+  else if (e.array !== undefined) html += `<div><span class="k">array</span> ${esc(e.array)}${e.chunk !== undefined ? ` · <span class="k">chunk</span> ${e.chunk}` : ""}</div>`;
+  html += `<div><span class="k">extent</span> ${fmt(e.start)} + ${fmt(e.len)} blocks (${bytes(e.len * map.block_size)})</div>`;
+  tooltip.innerHTML = html;
+  tooltip.style.display = "block";
+  const wrap = canvas.parentElement.getBoundingClientRect();
+  const left = Math.min(event.clientX - wrap.left + 14, wrap.width - tooltip.offsetWidth - 4);
+  tooltip.style.left = `${Math.max(0, left)}px`;
+  tooltip.style.top = `${event.clientY - wrap.top + 14}px`;
+  draw(cells[cell]);
+});
+canvas.addEventListener("mouseleave", () => { tooltip.style.display = "none"; draw(); });
+
+for (const button of document.querySelectorAll("[data-sample]")) {
+  button.addEventListener("click", () => {
+    for (const b of document.querySelectorAll("[data-sample]")) b.setAttribute("aria-pressed", String(b === button));
+    load(button.dataset.sample);
+  });
+}
+document.getElementById("file").addEventListener("change", (event) => {
+  if (event.target.files[0]) readFile(event.target.files[0]);
+});
+const drop = document.getElementById("drop");
+drop.addEventListener("dragover", (event) => { event.preventDefault(); drop.classList.add("drag"); });
+drop.addEventListener("dragleave", () => drop.classList.remove("drag"));
+drop.addEventListener("drop", (event) => {
+  event.preventDefault();
+  drop.classList.remove("drag");
+  if (event.dataTransfer.files[0]) readFile(event.dataTransfer.files[0]);
+});
+document.getElementById("theme").addEventListener("click", () => {
+  const dark = root.dataset.theme
+    ? root.dataset.theme === "dark"
+    : window.matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+  if (map) { renderStats(); draw(); }
+});
+window.addEventListener("resize", () => draw());
+
+const requested = new URLSearchParams(location.search).get("map");
+if (requested) {
+  for (const b of document.querySelectorAll("[data-sample]")) b.setAttribute("aria-pressed", "false");
+  load(requested);
+} else {
+  load("sample-map.json");
+}
+</script>
+</body>
+</html>

@@ -1320,6 +1320,11 @@ jobs:
           sed "s#__REPOSITORY__#$REPOSITORY#g" \
             docs/download/index.html > target/doc/download/index.html
 
+      - name: Add disk-space map visualizer
+        # A static page with its sample maps; regenerate the samples with
+        # docs/visualizer/make-samples.sh.
+        run: cp -r docs/visualizer target/doc/visualizer
+
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v6
 
