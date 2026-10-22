@@ -41,7 +41,7 @@ cli = ["dep:clap", "dep:ctrlc"]
 fuse = ["dep:fuser"]
 # Dokan driver for Windows x64 (the Dokan 2 driver must be installed at
 # runtime); ignored on other targets.
-dokan = ["dep:dokan", "dep:widestring"]
+dokan = ["dep:dokan-sys", "dep:widestring", "dep:winapi"]
 
 [dependencies]
 links-notation = { version = "0.27", default-features = false }
@@ -53,7 +53,10 @@ ctrlc = { version = "3.4", features = ["termination"], optional = true }
 fuser = { version = "0.18", default-features = false, optional = true }
 
 [target.'cfg(all(windows, any(target_arch = "x86_64", target_arch = "x86")))'.dependencies]
-dokan = { version = "0.3.1", optional = true }
+# Raw bindings: the `dokan` crate on top of them dereferences null file
+# contexts (see src/driver/dokan/mod.rs).
+dokan-sys = { version = "0.3.1", optional = true }
+winapi = { version = "0.3.9", optional = true, features = ["fileapi", "minwinbase", "minwindef", "ntdef", "winnt"] }
 widestring = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
@@ -63,7 +66,9 @@ serde_json = "1"
 walkdir = "2"
 
 [lints.rust]
-unsafe_code = "forbid"
+# Denied, not forbidden: the Dokan bindings (src/driver/dokan/ffi.rs) are
+# the one module that allows it.
+unsafe_code = "deny"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -8,7 +8,11 @@ use crate::fs::{Attr, FileKind};
 /// An `NTSTATUS` value.
 pub type Status = i32;
 
+/// `STATUS_SUCCESS`.
+pub const STATUS_SUCCESS: Status = 0;
 // The `as` casts reinterpret the documented unsigned codes as `NTSTATUS`.
+/// `STATUS_BUFFER_OVERFLOW` (a warning: the buffer took what fit).
+pub const STATUS_BUFFER_OVERFLOW: Status = 0x8000_0005_u32 as i32;
 /// `STATUS_NOT_IMPLEMENTED`.
 pub const STATUS_NOT_IMPLEMENTED: Status = 0xC000_0002_u32 as i32;
 /// `STATUS_INVALID_PARAMETER`.
@@ -41,6 +45,8 @@ pub const STATUS_NOT_A_DIRECTORY: Status = 0xC000_0103_u32 as i32;
 pub const STATUS_NAME_TOO_LONG: Status = 0xC000_0106_u32 as i32;
 /// `STATUS_SHARING_VIOLATION`.
 pub const STATUS_SHARING_VIOLATION: Status = 0xC000_0043_u32 as i32;
+/// `STATUS_INTERNAL_ERROR`.
+pub const STATUS_INTERNAL_ERROR: Status = 0xC000_00E5_u32 as i32;
 /// `STATUS_IO_DEVICE_ERROR`.
 pub const STATUS_IO_DEVICE_ERROR: Status = 0xC000_0185_u32 as i32;
 
@@ -204,6 +210,73 @@ pub const fn action(
     }
 }
 
+/// Whether `CreateFile` reports an existing name as a collision.
+///
+/// With these dispositions `STATUS_OBJECT_NAME_COLLISION` means "opened
+/// a name that already existed". Dokan counts that status
+/// as a successful open for these dispositions (it is how `OPEN_ALWAYS`
+/// and `CREATE_ALWAYS` set `ERROR_ALREADY_EXISTS`).
+#[must_use]
+pub const fn reports_existing(disposition: u32) -> bool {
+    matches!(
+        disposition,
+        FILE_SUPERSEDE | FILE_OPEN_IF | FILE_OVERWRITE_IF
+    )
+}
+
+/// The status `CreateFile` returns.
+///
+/// An open that succeeded is
+/// `STATUS_SUCCESS`, or `STATUS_OBJECT_NAME_COLLISION` when
+/// [`reports_existing`] says so and nothing was created. A failure that
+/// happens to be a collision becomes a sharing violation for those
+/// dispositions, since Dokan would take it for an open and hand the next
+/// requests an empty context.
+#[must_use]
+pub const fn create_status(disposition: u32, outcome: Result<bool, Status>) -> Status {
+    match outcome {
+        Ok(false) if reports_existing(disposition) => STATUS_OBJECT_NAME_COLLISION,
+        Ok(_) => STATUS_SUCCESS,
+        Err(STATUS_OBJECT_NAME_COLLISION) if reports_existing(disposition) => {
+            STATUS_SHARING_VIOLATION
+        }
+        Err(status) => status,
+    }
+}
+
+/// 100 ns intervals from 1601-01-01 (the `FILETIME` epoch) to 1970-01-01.
+const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+/// A `FILETIME` (100 ns intervals since 1601) for nanoseconds since the
+/// Unix epoch.
+#[must_use]
+pub const fn filetime(nanos: i64) -> u64 {
+    // `i64` nanoseconds reach back to 1677, so the sum is positive.
+    (nanos.div_euclid(100) + UNIX_EPOCH_TICKS).unsigned_abs()
+}
+
+/// The time a `SetFileTime` `FILETIME` asks for, in nanoseconds since the
+/// Unix epoch. 0 (keep), `-1` (stop updating) and `-2` (resume updating)
+/// change nothing.
+#[must_use]
+pub const fn set_time(filetime: u64) -> Option<i64> {
+    // The special values are negative when read as signed.
+    let ticks = filetime.cast_signed();
+    if ticks <= 0 {
+        None
+    } else {
+        Some((ticks - UNIX_EPOCH_TICKS).saturating_mul(100))
+    }
+}
+
+/// A volume serial number derived from the volume name (FNV-1a).
+#[must_use]
+pub fn serial(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5, |hash: u32, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,5 +399,56 @@ mod tests {
             ),
             Err(STATUS_INVALID_PARAMETER)
         );
+    }
+
+    #[test]
+    fn create_reports_existing_names_the_way_dokan_expects() {
+        let collision = STATUS_OBJECT_NAME_COLLISION;
+        assert_eq!(create_status(FILE_OPEN_IF, Ok(false)), collision);
+        assert_eq!(create_status(FILE_OVERWRITE_IF, Ok(false)), collision);
+        assert_eq!(create_status(FILE_SUPERSEDE, Ok(false)), collision);
+        assert_eq!(create_status(FILE_OPEN_IF, Ok(true)), STATUS_SUCCESS);
+        assert_eq!(create_status(FILE_OPEN, Ok(false)), STATUS_SUCCESS);
+        assert_eq!(create_status(FILE_CREATE, Ok(true)), STATUS_SUCCESS);
+        // A real collision must not read as an open.
+        assert_eq!(
+            create_status(FILE_OPEN_IF, Err(collision)),
+            STATUS_SHARING_VIOLATION
+        );
+        assert_eq!(create_status(FILE_CREATE, Err(collision)), collision);
+        assert_eq!(
+            create_status(FILE_OPEN, Err(STATUS_OBJECT_NAME_NOT_FOUND)),
+            STATUS_OBJECT_NAME_NOT_FOUND
+        );
+    }
+
+    #[test]
+    fn filetimes_round_trip_at_100_ns() {
+        assert_eq!(filetime(0), 116_444_736_000_000_000);
+        // 2023-11-14T22:13:20Z, a known FILETIME.
+        assert_eq!(filetime(1_700_000_000_000_000_000), 133_444_736_000_000_000);
+        for nanos in [
+            0,
+            100,
+            1_700_000_000_123_456_700,
+            -86_400_000_000_000,
+            i64::MIN / 100 * 100,
+            i64::MAX / 100 * 100,
+        ] {
+            assert_eq!(set_time(filetime(nanos)), Some(nanos));
+        }
+        assert_eq!(
+            set_time(filetime(1_700_000_000_000_000_099)),
+            Some(1_700_000_000_000_000_000)
+        );
+        assert_eq!(set_time(0), None);
+        assert_eq!(set_time(u64::MAX), None);
+        assert_eq!(set_time(u64::MAX - 1), None);
+    }
+
+    #[test]
+    fn serial_numbers_follow_the_name() {
+        assert_eq!(serial(""), 0x811c_9dc5);
+        assert_ne!(serial("lfs"), serial("lfs2"));
     }
 }
