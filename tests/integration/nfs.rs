@@ -18,6 +18,7 @@ use nfs3_client::nfs3_types::xdr_codec::Opaque;
 use nfs3_client::tokio::{TokioConnector, TokioIo};
 use nfs3_client::{Nfs3Client, Nfs3ConnectionBuilder};
 use std::net::SocketAddr;
+#[cfg(unix)]
 use std::path::Path;
 use tokio::net::TcpStream;
 
@@ -480,6 +481,7 @@ fn lfs_serve_prints_where_it_listens_and_serves_the_volume() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[cfg(unix)]
 fn nfs_required() -> bool {
     std::env::var("LFS_REQUIRE_NFS").is_ok_and(|value| value == "1")
 }
