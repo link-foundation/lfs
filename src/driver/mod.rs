@@ -208,7 +208,13 @@ mod tests {
 
     #[test]
     fn times_round_trip() {
-        for value in [0, 1, 1_700_000_000_123_456_789, -86_400_000_000_123] {
+        // Windows keeps a `SystemTime` in 100 ns ticks, so only multiples of
+        // 100 ns survive on every platform.
+        for value in [0, 100, 1_700_000_000_123_456_700, -86_400_000_000_100] {
+            assert_eq!(nanos(system_time(value)), value);
+        }
+        #[cfg(not(windows))]
+        for value in [1, 1_700_000_000_123_456_789, -86_400_000_000_123] {
             assert_eq!(nanos(system_time(value)), value);
         }
     }
