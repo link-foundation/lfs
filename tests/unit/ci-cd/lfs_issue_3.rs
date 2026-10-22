@@ -138,9 +138,8 @@ exit 1
         .output()
         .unwrap();
     let github_output = fs::read_to_string(&output_file).unwrap_or_default();
-    let calls = fs::read_to_string(dir.join("calls"))
-        .map(|text| text.trim().parse().unwrap())
-        .unwrap_or(0);
+    let calls =
+        fs::read_to_string(dir.join("calls")).map_or(0, |text| text.trim().parse().unwrap());
     let _ = fs::remove_dir_all(&dir);
     (output, github_output, calls)
 }
