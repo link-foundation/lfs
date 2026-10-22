@@ -10,3 +10,5 @@ bump: minor
 - The `lfs` command line tool: `mkfs`, `fsck`, `map`, `compact`, `put`, `get`, `ls`, `links`, `config` and `mount`.
 - Mount drivers: FUSE on Linux, FreeBSD and macOS (macFUSE), and Dokan 2 on Windows x64.
 - A disk-space map visualizer on GitHub Pages.
+- `LFS_DOKAN_TRACE=1` prints every Dokan callback with its arguments and result.
+- The issue #1 case study in `docs/case-studies/issue-1`: requirements, research, design and the evidence for each requirement.

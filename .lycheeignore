@@ -10,3 +10,9 @@ https://docs\.rs/example-sum-package-name
 
 # Web Archive rejects automated checks despite serving browser requests
 https://web\.archive\.org
+
+# Live only after the first release publishes the crate (docs.rs) and after
+# the first deploy-docs run on main (needs Settings -> Pages -> Source =
+# GitHub Actions). Remove these lines once both URLs answer.
+https://docs\.rs/links-fs
+https://link-foundation\.github\.io/lfs/
