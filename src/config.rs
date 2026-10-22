@@ -146,7 +146,9 @@ impl Default for FormatOptions {
 /// What the journal protects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum JournalMode {
-    /// No journal: metadata is overwritten in place (fastest, not crash safe).
+    /// No journal: changed chunks move to fresh blocks (shadow paging), so
+    /// only the superblock is overwritten in place. A volume too full for
+    /// that writes in place and is not crash safe until the commit lands.
     Off,
     /// Metadata is journaled; file data is written in place before the
     /// metadata commit (ordered mode).
