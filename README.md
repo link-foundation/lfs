@@ -46,6 +46,12 @@ link chunks, so the volume does not fragment.
 - **Disk-space map.** `lfs map` and `/.lfs/map.json` say who owns every
   block. The [visualizer](https://link-foundation.github.io/lfs/visualizer/)
   on GitHub Pages draws it.
+- **Byte-precise blueprint.** `lfs blueprint` dissects an image down to
+  one-byte fields: superblock, journal, link and inode records, tree nodes,
+  bit strings and file extents. `lfs demo` builds a volume for any
+  configuration, and the
+  [blueprint page](https://link-foundation.github.io/lfs/visualizer/blueprint.html)
+  runs both in the browser through WebAssembly.
 - **Crash safety.** The allocation state is rebuilt from block owners at
   mount, so there is no bitmap to disagree with. Freed blocks stay reserved
   until the commit lands. `lfs fsck` checks every invariant.
@@ -72,6 +78,8 @@ lfs export-links disk.lfs store.lino
 lfs compact disk.lfs              # defragment the free space
 lfs resize disk.lfs --size 1G     # grow (or shrink, compacting first)
 lfs map disk.lfs > map.json       # open it in the visualizer
+lfs blueprint disk.lfs --depth 3  # every region, record and field, to the byte
+lfs demo demo.lfs layout=split index=adaptive   # a sample volume for any configuration
 lfs fsck disk.lfs
 ```
 

@@ -7,13 +7,18 @@ Issue: [link-foundation/lfs#1](https://github.com/link-foundation/lfs/issues/1)
 This document collects what the issue asks for, what was found while
 researching it, the design that came out of it, and the evidence (tests,
 experiments, screenshots) that each requirement is met. Two research notes
-hold the detail behind the decisions:
+hold the detail behind the decisions, and a third collects earlier ideas:
 
 - [research-filesystems.md](research-filesystems.md): ext4 and other on-disk
   designs, the cost of stacked journals, user-space file system frameworks,
   and the bitstring versus tree break-even.
 - [research-linksplatform.md](research-linksplatform.md): the doublets store
   byte for byte, size-balanced trees, link-cli, and binary links notation v1.
+- [github-ideas.md](github-ideas.md): 154 ideas about a links file system
+  and a database with embedded files, found in issues, discussions and code
+  across the link-foundation, linksplatform and konard GitHub accounts. Each
+  idea is mapped to LFS: 67 done, 29 partly done, 33 not done and 25 not
+  applicable, with the evidence for each.
 
 ## Contents
 
@@ -38,6 +43,9 @@ All times are UTC.
 | 2026-10-21 | File system core (directories, contiguous files, commit, fsck, `/.lfs`), links import and export, the `lfs` CLI, doublets compatibility tests. |
 | 2026-10-21 | FUSE and Dokan drivers; CI mounts real volumes on Linux and Windows. |
 | 2026-10-22 | Compaction fixes, the GitHub Pages visualizer, Windows time precision, a Dokan crash fixed with an own binding, documentation. |
+| 2026-10-22 | Review feedback: a byte-precise disk blueprint for every configuration, as `lfs blueprint`, `lfs demo` and a WebAssembly page. |
+| 2026-10-22 | NFS version 3 driver and `lfs serve`, so macOS mounts without a kernel extension; CI mounts real volumes on all three systems. |
+| 2026-10-22 | `lfs resize`, an image lock (one writer or many readers), an atomic links import, and the inventory of earlier GitHub ideas. |
 
 ## 2. Requirements
 
@@ -68,7 +76,8 @@ Details and sources are in the research notes. The choices:
 
 | Need | Considered | Chosen | Why |
 | ---- | ---------- | ------ | --- |
-| Linux, macOS, FreeBSD mount | `fuser`, `fuse3`, `polyfuse`, NFS (`nfsserve`) | `fuser` 0.18 (MIT) | Pure Rust on Linux; macOS through macFUSE; widely used. |
+| Linux, macOS, FreeBSD mount | `fuser`, `fuse3`, `polyfuse`, NFS (`nfsserve`, `nfs3_server`) | `fuser` 0.18 (MIT) | Pure Rust on Linux; macOS through macFUSE; widely used. |
+| macOS mount without a kernel extension | macFUSE, FUSE-T, FSKit, NFS (`nfsserve` 0.11, `nfs3_server` 0.11) | `nfs3_server` 0.11 (BSD-3-Clause) on `tokio` | macOS mounts NFS version 3 with the built-in `mount_nfs`, without root or an extension; `nfs3_server` is a maintained fork of `nfsserve`. The same server works with Linux `mount -t nfs`. |
 | Windows mount | WinFsp (`winfsp-rs` is GPL-3.0), Dokan (`dokan` MIT, DLL LGPL), ProjFS | Dokan 2 through `dokan-sys` (MIT) with an own safe layer | License compatible with the Unlicense; the `dokan` crate crashes on null contexts (see [§6](#6-root-causes-found-along-the-way)). |
 | Binary links notation | Own codec, `links-notation` crate | `links-notation` 0.27 | The reference implementation; the golden archive test compares byte for byte with link-cli. |
 | Links store | `doublets` 0.8 on `FileMapped` | Own block-level store, same record format | `FileMapped` stores do not survive a reopen (linksplatform/mem-rs#36), and a file system needs block-level, journaled writes. `doublets` is a dev-dependency for compatibility tests. |
@@ -79,7 +88,7 @@ Details and sources are in the research notes. The choices:
 
 LFS is one OS-independent core (`src/` except `src/driver`) on a block
 device, and thin mount drivers. The same core runs on image files, raw
-devices, in memory (tests and examples) and behind FUSE or Dokan.
+devices, in memory (tests and examples) and behind FUSE, Dokan or NFS.
 
 ### 4.1 On-disk layout
 
@@ -235,13 +244,26 @@ links, which is how a mounted volume takes foreign links.
 
 - **Linux, FreeBSD, macOS:** FUSE via `fuser` (`src/driver/fuse.rs`); macOS
   needs macFUSE.
+- **macOS and Linux without FUSE:** an NFS version 3 server on localhost
+  (`src/driver/nfs.rs`). `lfs mount --nfs IMAGE DIR` starts it and runs
+  `mount_nfs` (macOS, no root, no extension) or `mount -t nfs` (Linux, as
+  root); `lfs serve IMAGE` only serves and prints the mount command. Stopping
+  the server commits the volume.
 - **Windows x64:** Dokan 2 via an own binding over `dokan-sys`
   (`src/driver/dokan/`), with Windows semantics in `src/driver/nt.rs`.
-- **Everywhere:** the `lfs` CLI (`mkfs`, `fsck`, `map`, `compact`, `put`,
-  `get`, `ls`, `cat`, `write`, `links`, `export-links`, `import-links`,
-  `config`, `mount` and more) works on image files and raw
-  devices without any driver, so a volume on an external drive can be read
-  and written on a machine without FUSE or Dokan.
+- **Everywhere:** the `lfs` CLI (`mkfs`, `fsck`, `map`, `blueprint`, `demo`,
+  `compact`, `resize`, `convert`, `put`, `get`, `ls`, `cat`, `write`,
+  `links`, `export-links`, `import-links`, `config`, `mount`, `serve` and
+  more) works on image files and raw devices without any driver, so a volume
+  on an external drive can be read and written on a machine without FUSE or
+  Dokan.
+- **Resizing:** `lfs resize IMAGE --size N` grows a volume into a larger image
+  or partition, or shrinks it after compacting, in one commit; a crash keeps
+  the old or the new size (`Fs::resize` in `src/fs/file.rs`).
+- **One writer at a time:** opening an image takes an advisory lock
+  (`flock` on Unix, `LockFileEx` on Windows, `src/device.rs`): one writer or
+  many readers. A second writer gets "in use" (`Error::Busy`) instead of
+  corrupting the volume.
 
 ### 4.10 The disk-space visualizer (R10)
 
@@ -262,6 +284,50 @@ The same volume after `lfs compact`, and the dark theme:
 
 ![Dark theme](../../screenshots/visualizer-dark.png)
 
+#### The byte-precise blueprint
+
+The block map says who owns each block. The blueprint
+(`src/fs/blueprint/`) goes further and dissects the image down to single
+bytes, for any configuration:
+
+```text
+$ lfs demo demo.img files=5 && lfs blueprint demo.img --depth 1
+0x00000000   4194304  volume "demo"  (1024 blocks of 4096 bytes, united layout)
+0x00000000      4096    superblock  (block 0) …
+0x00001000     65536    journal  (blocks 1..17) …
+0x00011000      4096    links chunk 0  (block 17) …
+0x00015000      4096    links chunk table  (block 21) …
+0x00016000      4096    inodes chunk 0  (block 22) …
+0x00018000      8192    /hard0  (inode 5, blocks 24..26) …
+0x00023000   4050944    free  (blocks 35..1024)
+```
+
+(Abridged.) Each `…` expands further: the superblock and journal into
+every header field, link chunks into records and then into their index,
+source, target and tree cells, inode chunks into 64-byte records and their
+fields, usage and variable-size chunks into tree nodes and bit strings, and
+chunk tables into one 64-bit block number per chunk.
+
+Every node covers exactly the bytes of its children, so the leaves partition
+the whole image. `lfs blueprint IMAGE` prints the tree (`--depth`, `--at
+3/0/2` or `--at @OFFSET` for the deepest node holding a byte, `--json`,
+`--hex`). `lfs demo IMAGE key=value...` builds a reproducible volume for any
+combination of format options (block size, layout, name encoding, journal
+size), workload (directories, files, links, deletions, compaction) and
+runtime keys, so the blueprint of any configuration can be looked at.
+
+[docs/visualizer/blueprint.html](../../visualizer/blueprint.html) runs the
+same code compiled to WebAssembly (`src/wasm.rs`,
+`docs/visualizer/build-wasm.sh`) in the browser. It shows a form with every
+`lfs demo` key, a proportional strip, a tree that expands lazily, a hex view
+of the selected bytes, and lookup by offset. It also opens an image dropped
+on the page. It is published at
+<https://link-foundation.github.io/lfs/visualizer/blueprint.html>.
+
+![The superblock dissected field by field](../../screenshots/blueprint-superblock.png)
+
+![A usage chunk, dark theme](../../screenshots/blueprint-usage-chunk-dark.png)
+
 ## 5. Requirement → implementation → evidence
 
 Test names point at `#[test]` functions; run them with
@@ -278,13 +344,13 @@ Test names point at `#[test]` functions; run them with
 | R7 | `united`, `split` and `data-only` layouts (§4.3) | `files_round_trip_in_every_layout`, `split_layout_with_large_blocks` |
 | R8 | Variable-size store; adaptive index with threshold and hysteresis (§4.4) | `auto_threshold_is_the_break_even_density`, `adaptive_index_switches_to_bitstrings` |
 | R9 | Doublets records, SBT, Hybrid external references, binary links notation, all configurable (§4.3–4.8) | All of the above; `random_operations_match_a_model` (links) |
-| R10 | `lfs map`, the visualizer, `deploy-docs` (§4.10) | `tests/integration/visualizer.rs` (four tests), the screenshots above |
-| R11 | One extent per file, relocation, compaction (§4.5) | `every_file_stays_one_extent_while_growing`, `compaction_merges_free_space`, `compaction_closes_gaps_too_small_for_the_files_after_them`, `a_large_file_fits_after_automatic_compaction`, `crashes_during_compaction_keep_every_file`, `random_operations_match_a_model` (fs) |
-| R12 | User links share the store and the commits (§4.6) | `user_links_share_the_volume_and_survive_remounts`, `the_file_system_structure_is_protected`, `the_links_database_is_usable_from_the_command_line` |
-| R13 | FUSE, Dokan, a driverless CLI, little-endian images (§4.9) | `tests/integration/mount.rs` (a real FUSE mount on Linux CI), `tests/integration/mount_windows.rs` (a real Dokan mount on Windows CI), the macOS build in CI, `experiments/issue-1-cross-check.sh` |
+| R10 | `lfs map`, the visualizer, `lfs blueprint`, `lfs demo`, the WebAssembly blueprint page, `deploy-docs` (§4.10) | `tests/integration/visualizer.rs` (five tests), `src/fs/blueprint/tests.rs` (`the_blueprint_partitions_every_byte_of_every_configuration`, `the_superblock_and_journal_are_dissected_field_by_field`, `link_records_show_the_ends_of_every_live_link`, `inode_records_and_file_extents_match_the_files`, `usage_sets_show_tree_nodes_and_bits`, `locating_a_byte_finds_the_deepest_node`, `lazy_expansion_matches_the_full_tree`), `demo_volumes_dissect_into_every_byte_in_every_configuration`, `docs/visualizer/lfs.test.mjs` (the WebAssembly build, in CI), the screenshots above |
+| R11 | One extent per file, relocation, compaction (§4.5) | `every_file_stays_one_extent_while_growing`, `compaction_merges_free_space`, `compaction_closes_gaps_too_small_for_the_files_after_them`, `a_large_file_fits_after_automatic_compaction`, `crashes_during_compaction_keep_every_file`, `random_operations_match_a_model` (fs), `resize_grows_and_shrinks_an_image`, `a_crash_while_resizing_keeps_the_old_or_the_new_size` |
+| R12 | User links share the store and the commits (§4.6) | `user_links_share_the_volume_and_survive_remounts`, `the_file_system_structure_is_protected`, `the_links_database_is_usable_from_the_command_line`, a malformed import leaves the volume unchanged (`tests/integration/cli.rs`) |
+| R13 | FUSE, Dokan, NFS, a driverless CLI, little-endian images, the image lock (§4.9) | `tests/integration/mount.rs` (a real FUSE mount on Linux CI), `tests/integration/mount_windows.rs` (a real Dokan mount on Windows CI), `tests/integration/nfs.rs` (an NFS client in-process on every system, and `the_system_nfs_client_mounts_a_volume` with the system `mount_nfs` on macOS CI and `mount -t nfs` on Linux CI), `one_writer_or_many_readers_open_an_image`, `a_volume_in_use_refuses_other_processes`, `experiments/issue-1-cross-check.sh` |
 | R14 | Rust only | `Cargo.toml` |
 | R15 | `LICENSE` is the Unlicense; dependencies are MIT, Apache-2.0 or Unlicense | `LICENSE`, `Cargo.toml` |
-| R16 | This document and the two research notes | `docs/case-studies/issue-1/` |
+| R16 | This document, the two research notes and the GitHub ideas inventory | `docs/case-studies/issue-1/` |
 
 Robustness checks that cover several requirements at once:
 `corrupted_images_never_hang` (300 rounds of bit flips in metadata blocks,
@@ -344,13 +410,16 @@ space, so it always terminates. It never copies a file onto itself
 (`compaction_closes_gaps_too_small_for_the_files_after_them`,
 `crashes_during_compaction_keep_every_file` in every journal mode).
 
-### 6.6 macOS builds need macFUSE
+### 6.6 macOS builds need macFUSE, and hosted runners cannot load it
 
 `fuser` links against macFUSE's libfuse on macOS, found through pkg-config.
-CI installs macFUSE and builds and tests everything except the mount, because
-hosted runners cannot load the macFUSE file system extension.
-`experiments/issue-1-cross-check.sh` type-checks the macOS and Windows
-drivers from Linux.
+CI installs macFUSE and builds the FUSE driver, but hosted runners cannot
+load the macFUSE file system extension, so a FUSE mount there is
+impossible. macOS mounts NFS version 3 with no extension, so the NFS driver
+(§4.9) is what CI mounts on macOS: `LFS_REQUIRE_NFS=1` makes
+`the_system_nfs_client_mounts_a_volume` fail instead of skipping if
+`mount_nfs` does not work. `experiments/issue-1-cross-check.sh`
+type-checks the macOS and Windows drivers from Linux.
 
 ## 7. Limits and open items
 
@@ -362,8 +431,11 @@ drivers from Linux.
 - **A volume too full for shadow paging** (`journal=off`) writes in place and
   is not crash safe until the commit lands. The `JournalMode::Off` docs say
   so.
-- **The macOS mount is not exercised in CI**, as explained in §6.6. It is
-  built and type-checked.
+- **The macOS FUSE mount is not exercised in CI**, as explained in §6.6. It
+  is built and type-checked; the macOS mount in CI goes through NFS.
+- **NFS version 3 has no extended attributes**, and the mounts use
+  `nolock`/`nolocks`, so byte-range locks are only local to the client.
+  Only one process may write an image at a time anyway (the image lock).
 - **Kernel drivers and FSKit** are possible later adapters for the same core;
   the user-space drivers cover all three systems today
   (research-filesystems.md, "Implications for LFS").
@@ -383,6 +455,11 @@ cargo run --example basic_usage           # the library tour
 cargo run -- mkfs disk.img --size 64M
 cargo run -- put disk.img README.md
 cargo run -- map disk.img -o map.json   # drop it on docs/visualizer/index.html
+cargo run -- demo demo.img layout=split index=adaptive files=20
+cargo run -- blueprint demo.img --depth 3          # the byte-precise blueprint
+cargo run -- blueprint demo.img --at @0x1000 --depth 0
+cargo run --features nfs -- serve demo.img       # prints the mount command
+bash docs/visualizer/build-wasm.sh        # build the WebAssembly blueprint page
 bash experiments/fuse_smoke.sh            # mount, use and unmount with FUSE
 bash experiments/issue-1-cross-check.sh   # type-check the Windows and macOS drivers
 bash docs/visualizer/make-samples.sh      # rebuild the visualizer samples
