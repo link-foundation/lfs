@@ -260,7 +260,8 @@ pub enum Command {
         /// Image file or device.
         image: PathBuf,
     },
-    /// Mounts a volume (FUSE on Linux and macOS, Dokan on Windows).
+    /// Mounts a volume (FUSE on Linux and macOS, Dokan on Windows, or NFS
+    /// with `--nfs`).
     Mount {
         /// Image file or device.
         image: PathBuf,
@@ -272,6 +273,25 @@ pub enum Command {
         /// Let other users access the mount (FUSE `allow_other`).
         #[arg(long)]
         allow_other: bool,
+        /// Serve over NFS version 3 on localhost and mount with the system's
+        /// NFS client (`nfs` feature): `mount_nfs` on macOS, which needs no
+        /// kernel extension, or `mount -t nfs` as root on Linux.
+        #[arg(long)]
+        nfs: bool,
+    },
+    /// Serves a volume over NFS version 3 until Ctrl-C (`nfs` feature) and
+    /// prints the command that mounts it.
+    Serve {
+        /// Image file or device.
+        image: PathBuf,
+        /// Address to listen on; port 0 picks a free port. NFS version 3
+        /// trusts the uid a client sends, so listen beyond localhost only on
+        /// a network you trust.
+        #[arg(long, default_value = "127.0.0.1:0")]
+        listen: std::net::SocketAddr,
+        /// Serve read-only.
+        #[arg(long)]
+        read_only: bool,
     },
 }
 

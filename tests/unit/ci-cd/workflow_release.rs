@@ -183,6 +183,8 @@ fn release_workflow_jobs_have_explicit_timeouts() {
         // Compiles and runs every scripts/*.rs test harness from scratch; the
         // cargo-install of rust-script dominates a cold run. See issue #150.
         ("script-tests", 20),
+        // Builds LFS for WebAssembly and tests the blueprint page's API.
+        ("wasm", 15),
         ("coverage", 15),
         ("build", 10),
         ("auto-release", 60),

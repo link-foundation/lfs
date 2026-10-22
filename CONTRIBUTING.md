@@ -49,6 +49,10 @@ Thank you for your interest in contributing! This document provides guidelines a
    - Windows x64: [Dokan 2](https://github.com/dokan-dev/dokany/releases).
      `LFS_REQUIRE_DOKAN=1` makes the Windows mount tests fail instead of
      skipping, and `LFS_DOKAN_TRACE=1` logs every Dokan callback.
+   - NFS (`nfs` feature, any system): the NFS tests need nothing installed.
+     `LFS_REQUIRE_NFS=1` also mounts with the system's NFS client: as the
+     user with `mount_nfs` on macOS, through `sudo -n mount -t nfs` on Linux
+     (`sudo apt-get install nfs-common`).
 
    `bash experiments/issue-1-cross-check.sh` runs Clippy for the Windows and
    macOS drivers from Linux.

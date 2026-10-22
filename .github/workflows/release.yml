@@ -538,17 +538,20 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y fuse3
+          sudo apt-get install -y fuse3 nfs-common
           echo "LFS_REQUIRE_FUSE=1" >> "$GITHUB_ENV"
+          echo "LFS_REQUIRE_NFS=1" >> "$GITHUB_ENV"
 
       # fuser links against macFUSE's libfuse on macOS. Runners cannot load
-      # its file system extension, so the mount itself is only built here.
+      # its file system extension, so the FUSE mount is only built here; the
+      # NFS driver mounts for real with the built-in mount_nfs instead.
       - name: Install macFUSE on macOS
         if: runner.os == 'macOS'
         run: |
           brew install --cask macfuse
           brew list pkgconf >/dev/null 2>&1 || brew install pkgconf
           echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}" >> "$GITHUB_ENV"
+          echo "LFS_REQUIRE_NFS=1" >> "$GITHUB_ENV"
 
       # dokan-sys links against the installed Dokan library when
       # DokanLibrary2_LibraryPath_x64 is set, so the build matches the driver.

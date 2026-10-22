@@ -2,7 +2,9 @@
 //!
 //! FUSE serves Linux, macOS and FreeBSD (`fuse` feature) and Dokan serves
 //! Windows x64 (`dokan` feature). Builds without either still export
-//! [`spawn`] and [`mount`], which then report how to get a driver.
+//! [`spawn`] and [`mount`], which then report how to get a driver. The
+//! [`nfs`] module (`nfs` feature) serves a volume over `NFSv3` on every
+//! platform, which macOS mounts without a kernel extension.
 //!
 //! Both drivers serve one [`Fs`] behind a mutex, commit it on `fsync`, on
 //! `commit-every` and when the volume is unmounted, and answer a request
@@ -19,6 +21,8 @@ mod dokan;
     any(target_os = "linux", target_os = "macos", target_os = "freebsd")
 ))]
 mod fuse;
+#[cfg(feature = "nfs")]
+pub mod nfs;
 #[cfg(not(any(
     all(
         feature = "dokan",

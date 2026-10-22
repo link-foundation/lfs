@@ -9,7 +9,7 @@ keywords = ["filesystem", "fuse", "doublets", "links", "dokan"]
 categories = ["filesystem", "database-implementations"]
 repository = "https://github.com/link-foundation/lfs"
 documentation = "https://docs.rs/links-fs"
-rust-version = "1.87"
+rust-version = "1.88"
 
 # Narrow allowlist of files shipped in the published `.crate` archive.
 # Keeping this list tight prevents docs, case studies, generated CI artifacts,
@@ -42,12 +42,17 @@ fuse = ["dep:fuser"]
 # Dokan driver for Windows x64 (the Dokan 2 driver must be installed at
 # runtime); ignored on other targets.
 dokan = ["dep:dokan-sys", "dep:widestring", "dep:winapi"]
+# NFSv3 server on localhost, for every platform: macOS mounts it with the
+# built-in `mount_nfs` (no kernel extension), Linux with `mount -t nfs`.
+nfs = ["dep:nfs3_server", "dep:tokio"]
 
 [dependencies]
 links-notation = { version = "0.27", default-features = false }
 clap = { version = "4.4", features = ["derive", "env"], optional = true }
 # Unmounts cleanly on Ctrl-C and SIGTERM (`lfs mount`).
 ctrlc = { version = "3.4", features = ["termination"], optional = true }
+nfs3_server = { version = "0.11.1", optional = true }
+tokio = { version = "1.44", default-features = false, features = ["rt", "net", "sync", "time", "macros"], optional = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))'.dependencies]
 fuser = { version = "0.18", default-features = false, optional = true }
@@ -61,6 +66,8 @@ widestring = { version = "0.4.3", optional = true }
 
 [dev-dependencies]
 doublets = "0.8"
+# Talks NFSv3 to the `nfs` driver over TCP, on every platform.
+nfs3_client = { version = "0.9", features = ["tokio"] }
 regex = "1"
 serde_json = "1"
 walkdir = "2"

@@ -40,8 +40,8 @@ link chunks, so the volume does not fragment.
   whole store imports and exports as binary links notation archives (as
   link-cli writes them), doublets `.links` files, or LiNo text.
 - **Portable images.** Images are little-endian on regular files or raw
-  devices, mountable with FUSE (Linux, FreeBSD, macOS with macFUSE) and
-  Dokan 2 (Windows x64).
+  devices, mountable with FUSE (Linux, FreeBSD, macOS with macFUSE),
+  Dokan 2 (Windows x64) and NFS version 3 (macOS with no extension, Linux).
 - **Disk-space map.** `lfs map` and `/.lfs/map.json` say who owns every
   block. The [visualizer](https://link-foundation.github.io/lfs/visualizer/)
   on GitHub Pages draws it.
@@ -79,6 +79,10 @@ echo '(journal: off)' > /mnt/lfs/.lfs/config
 
 cargo install links-fs --features dokan   # Windows x64
 lfs mount disk.lfs M:
+
+cargo install links-fs --features nfs     # any system with an NFS client
+lfs mount --nfs disk.lfs ~/lfs            # macOS: built-in mount_nfs, no root
+lfs serve disk.lfs --listen 127.0.0.1:2049  # serve only; prints the mount command
 ```
 
 | Platform | Driver | Needs at run time |
@@ -86,6 +90,12 @@ lfs mount disk.lfs M:
 | Linux, FreeBSD | FUSE (`fuser`, pure Rust) | `fusermount3` (`apt install fuse3`) |
 | macOS | FUSE | [macFUSE](https://osxfuse.github.io/) (also needed to build) |
 | Windows x64 | Dokan 2 (own binding over `dokan-sys`) | [Dokan 2](https://github.com/dokan-dev/dokany/releases) |
+| macOS, Linux | NFS version 3 server (`nfs3_server`) on localhost | `mount_nfs` (built in on macOS), `mount -t nfs` as root (`apt install nfs-common`) |
+
+The NFS driver needs no kernel extension, which is why macOS CI mounts
+through it. NFS version 3 has no hard links in the server library, ignores
+the mode of `mkdir` (directories start as `0755`) and trusts the uid a client
+sends, so `lfs serve` listens on `127.0.0.1` unless told otherwise.
 
 Every mounted volume has a virtual `.lfs` directory with four files:
 `config` (write `(key: value)` lines to apply them), `map.json`, `links` and
@@ -120,7 +130,7 @@ map.
 
 ```bash
 cargo build --all-features
-cargo test --all-features         # unit, integration and FUSE mount tests
+cargo test --all-features         # unit, integration, FUSE and NFS tests
 cargo fmt --check
 cargo clippy --all-targets --all-features -- -D warnings
 rust-script scripts/check-file-size.rs
@@ -130,7 +140,10 @@ bash experiments/issue-1-cross-check.sh   # clippy for windows-gnu and macOS
 
 The FUSE mount tests skip when `/dev/fuse` is missing, unless
 `LFS_REQUIRE_FUSE=1` is set. The Windows tests do the same unless
-`LFS_REQUIRE_DOKAN=1` is set. CI sets both variables.
+`LFS_REQUIRE_DOKAN=1` is set. The NFS tests talk to the server with an NFS
+client library on every system; `LFS_REQUIRE_NFS=1` also mounts a volume
+with the system's NFS client (through `sudo -n` where a user cannot mount).
+CI sets all three.
 
 ## Configuration
 

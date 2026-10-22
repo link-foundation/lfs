@@ -104,6 +104,18 @@ fn mount_explains_how_to_get_a_driver() {
 }
 
 #[test]
+#[cfg(not(feature = "nfs"))]
+fn nfs_explains_how_to_get_it() {
+    let scratch = Scratch::new("nonfs");
+    let image = scratch.path("n.lfs");
+    ok(&["mkfs", s(&image), "--size", "4M"]);
+    let error = fails(&["serve", s(&image)]);
+    assert!(error.contains("--features nfs"), "{error}");
+    let error = fails(&["mount", "--nfs", s(&image), s(&scratch.path("mnt"))]);
+    assert!(error.contains("--features nfs"), "{error}");
+}
+
+#[test]
 fn files_round_trip_between_the_host_and_a_volume() {
     let scratch = Scratch::new("copy");
     let image = scratch.path("v.img");

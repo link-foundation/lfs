@@ -730,7 +730,20 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
             mountpoint,
             read_only,
             allow_other,
-        } => mount::mount(&image, &mountpoint, read_only, allow_other, &set)?,
+            nfs,
+        } => {
+            let how = mount::How {
+                read_only,
+                allow_other,
+                nfs,
+            };
+            mount::mount(&image, &mountpoint, &how, &set)?;
+        }
+        Command::Serve {
+            image,
+            listen,
+            read_only,
+        } => mount::serve(&image, listen, read_only, &set)?,
     }
     Ok(ExitCode::SUCCESS)
 }
