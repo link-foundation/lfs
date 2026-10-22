@@ -28,6 +28,7 @@ exclude `dev/log`.
 | 09:59 | `6367200`: Windows unit tests fail on imports that are unused off Unix (`Path`, `Command`, `Output`), fixed by `6bd45e6`. |
 | 09:59–10:09 | `e2a6f04`, `8c6f6d4`, `3c1219c`, `9ec94d0`: files split under the 900-line warning threshold and the legacy caps removed. |
 | 10:06, 10:09 | Runs 39760622993 and 39760967706 fail in integration tests this PR never touched: `nfs::stopping_the_server_commits_a_volume_that_reopens_clean` (Ubuntu, macOS, fresh merge) and `cli::a_volume_in_use_refuses_other_processes` (Ubuntu). Both fail with `Busy("… is in use by another process …")`. Fixed by `2959f4a`. |
+| 10:22 | `1ea58ec`: every workflow passes. `ci-logs/annotations-pr4-1ea58ec.tsv` holds the remaining annotations: the intended dependency-graph warning, which needs an admin, the link checker's summary notice and GitHub's macOS capacity notice. No DEP0040, Git hint, offline zizmor or file-size output is left. The Pages deploy runs only on `main`, so the DEP0040 fix shows there first. |
 
 ## Requirements
 
