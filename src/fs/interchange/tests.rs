@@ -181,3 +181,26 @@ fn read_only_volumes_refuse_link_changes() {
     ));
     assert!(fs.export_links(Format::Lino).is_ok());
 }
+
+#[test]
+fn a_malformed_import_changes_nothing() {
+    let mut fs = fresh();
+    populate(&mut fs);
+    let before = fs.export_links(Format::Lino).unwrap();
+    // Every link is checked before any is added: an unparsable line, a
+    // dangling reference or a repeated pair after good lines adds nothing.
+    for bad in [
+        "(500: 500 500)\n(501: 500 $7)\n(502: oops\n",
+        "(500: 500 500)\n(501: 500 $7)\n(502: 2000 3000)\n",
+        "(500: 500 500)\n(501: 500 $7)\n(502: 500 $7)\n",
+    ] {
+        assert!(
+            fs.import_links(bad.as_bytes(), Format::Lino).is_err(),
+            "{bad}"
+        );
+        assert_eq!(fs.export_links(Format::Lino).unwrap(), before, "{bad}");
+    }
+    let fs = reopen(fs);
+    assert_eq!(fs.export_links(Format::Lino).unwrap(), before);
+    assert_clean(&fs);
+}

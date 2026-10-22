@@ -163,8 +163,9 @@ impl<D: BlockDevice> Fs<D> {
     /// links that already exist, and commits. Points named `one` …
     /// `identified` in an archive become the volume's marker points; every
     /// other point, `file` and `dir` included, is created anew, so imported
-    /// links never become part of the file system. Returns the number of
-    /// links added.
+    /// links never become part of the file system. Every link is checked
+    /// before any is added, so a malformed input changes nothing. Returns the
+    /// number of links added.
     pub fn import_links(&mut self, bytes: &[u8], format: Format) -> Result<u64> {
         self.check_writable()?;
         let (links, names) = match format {
