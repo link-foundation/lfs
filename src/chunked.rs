@@ -21,7 +21,13 @@ use crate::space::{Fit, Space};
 pub const UNPLACED: u64 = u64::MAX;
 
 /// Zeros returned for out-of-range records (the largest record is 1 MiB).
-static ZEROS: [u8; 1 << 20] = [0; 1 << 20];
+///
+/// Allocated on first use rather than a static array: a 1 MiB zero static
+/// is stored verbatim in the WebAssembly data section.
+fn zeros(len: usize) -> &'static [u8] {
+    static ZEROS: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+    &ZEROS.get_or_init(|| vec![0; 1 << 20])[..len]
+}
 
 /// Where a chunk table lives on disk.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -188,11 +194,10 @@ impl ChunkedArray {
     #[must_use]
     pub fn record(&self, index: u64) -> &[u8] {
         let (chunk, offset) = self.locate(index);
-        self.chunks
-            .get(chunk)
-            .map_or(&ZEROS[..self.record_size], |chunk| {
-                &chunk.data[offset..offset + self.record_size]
-            })
+        self.chunks.get(chunk).map_or_else(
+            || zeros(self.record_size),
+            |chunk| &chunk.data[offset..offset + self.record_size],
+        )
     }
 
     /// Mutable record `index`; marks its chunk dirty.

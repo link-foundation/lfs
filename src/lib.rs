@@ -19,3 +19,5 @@ pub mod sbt;
 pub mod space;
 pub mod superblock;
 pub mod varstore;
+#[cfg(target_arch = "wasm32")]
+pub mod wasm;
