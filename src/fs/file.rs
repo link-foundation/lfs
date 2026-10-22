@@ -14,7 +14,7 @@
 
 use super::inode::{FileKind, Inode};
 use super::map::Owner;
-use super::{commit::arrays_of, control, now, Fs};
+use super::{commit::arrays_of, control, now, Fs, MIN_BLOCKS};
 use crate::device::BlockDevice;
 use crate::error::{Error, Result};
 
@@ -451,6 +451,43 @@ impl<D: BlockDevice> Fs<D> {
     /// blocks, which leaves a few small gaps.
     pub fn compact(&mut self) -> Result<CompactReport> {
         self.compact_except(None)
+    }
+
+    /// Changes the volume size to `blocks` in one commit.
+    ///
+    /// Growing needs a device of at least that many blocks (extend the image
+    /// file or the partition first). Shrinking compacts the volume when
+    /// anything lies past the new end and fails with [`Error::NoSpace`] if
+    /// something still does; the device can be truncated afterwards.
+    pub fn resize(&mut self, blocks: u64) -> Result<()> {
+        self.check_writable()?;
+        let block_size = u64::from(self.sb.block_size);
+        let smallest = MIN_BLOCKS.max(self.journal.start + self.journal.blocks + 1);
+        if blocks < smallest {
+            return Err(Error::invalid(format!(
+                "a volume needs at least {smallest} blocks"
+            )));
+        }
+        let room = self.device.len_bytes() / block_size;
+        if blocks > room {
+            return Err(Error::invalid(format!(
+                "the device holds only {room} blocks; extend it before growing to {blocks}"
+            )));
+        }
+        if blocks == self.sb.total_blocks {
+            return Ok(());
+        }
+        self.dirty = true;
+        self.commit()?;
+        if !self.space.resize(blocks) {
+            self.compact()?;
+            if !self.space.resize(blocks) {
+                return Err(Error::NoSpace);
+            }
+        }
+        self.sb.total_blocks = blocks;
+        self.dirty = true;
+        self.commit()
     }
 
     fn compact_except(&mut self, skip: Option<u64>) -> Result<CompactReport> {

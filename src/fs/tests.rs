@@ -1,6 +1,7 @@
 use super::*;
 use crate::config::{IndexMode, NameEncoding};
 use crate::device::{CrashDevice, MemDevice};
+use std::collections::BTreeSet;
 
 const MIB: u64 = 1 << 20;
 
@@ -379,6 +380,82 @@ fn compaction_merges_free_space() {
     let mut fs = reopen(fs);
     assert_eq!(get(&mut fs, "/f59"), pattern(10_000, 59));
     assert_clean(&fs);
+}
+
+#[test]
+fn volumes_grow_and_shrink_in_every_journal_mode() {
+    for journal in ["metadata", "full", "off"] {
+        let mut fs = Fs::format(MemDevice::new(MIB), &options(1024, Layout::United), "r").unwrap();
+        fs.set_config_value("journal", journal).unwrap();
+        put(&mut fs, "/a", &pattern(300_000, 1));
+        assert!(matches!(fs.resize(2048), Err(Error::InvalidArgument(_))));
+        // Grow: extend the device first, then the volume.
+        let mut bytes = fs.close().unwrap().into_bytes();
+        bytes.resize(4 * MIB as usize, 0);
+        let mut fs = Fs::open(MemDevice::from_bytes(bytes), true, &[]).unwrap();
+        assert_eq!(fs.statfs().blocks, 1024);
+        fs.resize(4096).unwrap();
+        assert_eq!(fs.statfs().blocks, 4096);
+        for i in 0..8 {
+            put(&mut fs, &format!("/b{i}"), &pattern(300_000, i));
+        }
+        assert_clean(&fs);
+        let mut fs = reopen(fs);
+        assert_eq!(fs.statfs().blocks, 4096);
+        assert_eq!(get(&mut fs, "/b7"), pattern(300_000, 7));
+        // Shrink: the files near the end move down first.
+        for i in 0..7 {
+            fs.unlink(ROOT_INO, &format!("b{i}")).unwrap();
+        }
+        fs.resize(1536).unwrap();
+        assert_eq!(fs.statfs().blocks, 1536);
+        let smallest = MIN_BLOCKS.max(fs.journal.start + fs.journal.blocks + 1);
+        assert!(matches!(
+            fs.resize(smallest - 1),
+            Err(Error::InvalidArgument(_))
+        ));
+        assert!(matches!(fs.resize(smallest), Err(Error::NoSpace)));
+        assert_eq!(fs.statfs().blocks, 1536);
+        assert_clean(&fs);
+        // The device can be truncated to the new size.
+        let mut bytes = fs.close().unwrap().into_bytes();
+        bytes.truncate(1536 * 1024);
+        let mut fs = Fs::open(MemDevice::from_bytes(bytes), true, &[]).unwrap();
+        assert_eq!(get(&mut fs, "/a"), pattern(300_000, 1));
+        assert_eq!(get(&mut fs, "/b7"), pattern(300_000, 7));
+        assert_clean(&fs);
+    }
+}
+
+#[test]
+fn a_crash_while_resizing_keeps_the_old_or_the_new_size() {
+    let base = {
+        let mut fs =
+            Fs::format(MemDevice::new(2 * MIB), &options(1024, Layout::United), "c").unwrap();
+        for i in 0..6 {
+            put(&mut fs, &format!("/f{i}"), &pattern(200_000, i));
+        }
+        for i in 0..5 {
+            fs.unlink(ROOT_INO, &format!("f{i}")).unwrap();
+        }
+        fs.close().unwrap().into_bytes()
+    };
+    let writes = {
+        let mut fs = Fs::open(CrashDevice::new(base.clone(), None), true, &[]).unwrap();
+        fs.resize(600).unwrap();
+        fs.into_device().writes_done()
+    };
+    let mut sizes = BTreeSet::new();
+    for budget in 0..=writes {
+        let mut fs = Fs::open(CrashDevice::new(base.clone(), Some(budget)), true, &[]).unwrap();
+        let _ = fs.resize(600);
+        let image = fs.into_device().image();
+        let mut fs = Fs::open(MemDevice::from_bytes(image), true, &[]).unwrap();
+        sizes.insert(fs.statfs().blocks);
+        assert_eq!(get(&mut fs, "/f5"), pattern(200_000, 5));
+        assert_clean(&fs);
+    }
+    assert_eq!(sizes, BTreeSet::from([600, 2048]));
 }
 
 #[test]

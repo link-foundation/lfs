@@ -7,7 +7,7 @@ bump: minor
 - Files take one contiguous extent each; gaps between files are filled with link chunks, and online compaction keeps the free space in one extent.
 - Settings that can change at run time, stored in `/.lfs/config` and set with `lfs config`.
 - Links import and export: binary links notation, doublets files and LiNo.
-- The `lfs` command line tool: `mkfs`, `fsck`, `map`, `compact`, `put`, `get`, `ls`, `links`, `config`, `blueprint`, `demo`, `mount` and `serve`.
+- The `lfs` command line tool: `mkfs`, `fsck`, `map`, `compact`, `resize`, `put`, `get`, `ls`, `links`, `config`, `blueprint`, `demo`, `mount` and `serve`.
 - Mount drivers: FUSE on Linux, FreeBSD and macOS (macFUSE), Dokan 2 on Windows x64, and an NFS version 3 server (`nfs` feature, `lfs mount --nfs` and `lfs serve`) that macOS mounts with its built-in `mount_nfs` and Linux with `mount -t nfs`.
 - A disk-space map visualizer on GitHub Pages, and a byte-level blueprint page that runs LFS as WebAssembly to format, open and walk any configuration's volume down to single bytes.
 - `LFS_DOKAN_TRACE=1` prints every Dokan callback with its arguments and result.

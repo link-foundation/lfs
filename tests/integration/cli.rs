@@ -269,3 +269,118 @@ fn a_closed_pipe_is_not_an_error_message() {
         "{output:?}"
     );
 }
+
+#[test]
+fn resize_grows_and_shrinks_an_image() {
+    let scratch = Scratch::new("resize");
+    let image = scratch.path("v.img");
+    let image = s(&image);
+    let big: Vec<u8> = (0..6_000_000u32).map(|i| (i % 249) as u8).collect();
+    let host = scratch.path("big.bin");
+    std::fs::write(&host, &big).unwrap();
+
+    ok(&["mkfs", image, "--size", "4M"]);
+    assert!(fails(&["put", image, s(&host), "/big"]).contains("space"));
+    let grown = ok(&["resize", image, "--size", "16M"]);
+    assert!(grown.contains("1024 -> 4096 blocks"), "{grown}");
+    assert_eq!(std::fs::metadata(image).unwrap().len(), 16 << 20);
+    ok(&["put", image, s(&host), "/big"]);
+    assert!(ok(&["fsck", image]).contains("clean"));
+
+    // Too small for what is stored: nothing changes.
+    assert!(fails(&["resize", image, "--size", "4M"]).contains("space"));
+    assert_eq!(std::fs::metadata(image).unwrap().len(), 16 << 20);
+    let shrunk = ok(&["resize", image, "--size", "8M"]);
+    assert!(shrunk.contains("4096 -> 2048 blocks"), "{shrunk}");
+    assert_eq!(std::fs::metadata(image).unwrap().len(), 8 << 20);
+    assert!(ok(&["fsck", image]).contains("clean"));
+
+    // Without --size the volume grows into an enlarged image file.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(image)
+        .unwrap()
+        .set_len(12 << 20)
+        .unwrap();
+    assert!(ok(&["resize", image]).contains("2048 -> 3072 blocks"));
+    assert!(ok(&["info", image]).contains("3072"));
+    let out = scratch.path("out.bin");
+    ok(&["get", image, "/big", s(&out)]);
+    assert_eq!(std::fs::read(out).unwrap(), big);
+}
+
+/// Checks that the children of `node` cover exactly its bytes, recursively.
+fn assert_partitions(node: &serde_json::Value) -> usize {
+    let offset = node["offset"].as_u64().unwrap();
+    let size = node["size"].as_u64().unwrap();
+    let Some(children) = node["children"].as_array() else {
+        assert!(node["more"].is_null(), "unexpanded node {node}");
+        return 1;
+    };
+    let mut next = offset;
+    let mut leaves = 0;
+    for child in children {
+        assert_eq!(
+            child["offset"].as_u64().unwrap(),
+            next,
+            "gap before {}",
+            child["name"]
+        );
+        next += child["size"].as_u64().unwrap();
+        leaves += assert_partitions(child);
+    }
+    assert_eq!(
+        next,
+        offset + size,
+        "children of {} do not fill it",
+        node["name"]
+    );
+    leaves
+}
+
+#[test]
+fn demo_volumes_dissect_into_every_byte_in_every_configuration() {
+    let scratch = Scratch::new("blueprint");
+    let configurations: [&[&str]; 5] = [
+        &[],
+        &["layout=split", "index=adaptive"],
+        &["layout=data-only", "journal-blocks=0", "journal=off"],
+        &[
+            "layout=united",
+            "names=packed",
+            "index=bitstring",
+            "block-size=1024",
+        ],
+        &[
+            "layout=split",
+            "index=tree",
+            "journal=full",
+            "delete-percent=50",
+            "compact=true",
+        ],
+    ];
+    for (number, parameters) in configurations.iter().enumerate() {
+        let image = scratch.path(&format!("demo{number}.img"));
+        let image = s(&image);
+        let mut args = vec!["demo", image];
+        args.extend_from_slice(parameters);
+        assert!(ok(&args).contains("created"), "{parameters:?}");
+        assert!(ok(&["fsck", image]).contains("clean"), "{parameters:?}");
+
+        let text = ok(&["blueprint", image]);
+        assert!(text.starts_with("0x00000000"), "{text}");
+        assert!(text.contains("magic = LINKSFS"), "{text}");
+        let json = ok(&["blueprint", image, "--json", "--depth", "all"]);
+        let root: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(root["offset"], 0);
+        assert_eq!(
+            root["size"].as_u64().unwrap(),
+            std::fs::metadata(image).unwrap().len()
+        );
+        assert!(assert_partitions(&root) > 100, "{parameters:?}");
+
+        let at = ok(&["blueprint", image, "--at", "@0x10"]);
+        assert!(at.contains("total_blocks"), "{at}");
+    }
+    assert!(fails(&["demo", s(&scratch.path("x.img")), "colour=blue"]).contains("colour"));
+}

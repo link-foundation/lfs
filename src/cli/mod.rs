@@ -6,7 +6,7 @@ mod mount;
 use crate::{Cli, Command, LinkAction};
 use links_fs::config::{FormatOptions, Layout, NameEncoding, RUNTIME_KEYS};
 use links_fs::demo::{Demo, DEMO_KEYS};
-use links_fs::device::FileDevice;
+use links_fs::device::{BlockDevice, FileDevice};
 use links_fs::error::Error;
 use links_fs::fs::{Creator, FileKind, Fs, ROOT_INO};
 use links_fs::links::packet::{self, Format};
@@ -367,6 +367,38 @@ fn mkfs(
     close(fs)
 }
 
+fn resize(image: &Path, size: Option<u64>, set: &[(String, String)]) -> Outcome<()> {
+    let regular = std::fs::metadata(image).is_ok_and(|metadata| metadata.is_file());
+    let set_len = |len: u64| {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(image)
+            .and_then(|file| file.set_len(len))
+            .context(|| format!("resizing {}", image.display()))
+    };
+    if let Some(size) = size.filter(|_| regular) {
+        if size > std::fs::metadata(image).map_or(0, |metadata| metadata.len()) {
+            set_len(size)?;
+        }
+    }
+    let mut fs = open(image, true, set)?;
+    let before = fs.statfs();
+    let block_size = u64::from(before.block_size);
+    let blocks = size.unwrap_or_else(|| fs.device().len_bytes()) / block_size;
+    fs.resize(blocks)
+        .context(|| format!("resizing to {blocks} blocks"))?;
+    close(fs)?;
+    if regular && size.is_some() {
+        set_len(blocks * block_size)?;
+    }
+    println!(
+        "resized {}: {} -> {blocks} blocks of {block_size} bytes",
+        image.display(),
+        before.blocks
+    );
+    Ok(())
+}
+
 /// The owner of a regular image file (its creator), or root for devices.
 #[cfg(unix)]
 fn image_owner(image: &Path) -> (u32, u32) {
@@ -725,6 +757,7 @@ pub fn run(cli: Cli) -> Outcome<ExitCode> {
                 report.largest_after
             );
         }
+        Command::Resize { image, size } => resize(&image, size, &set)?,
         Command::Mount {
             image,
             mountpoint,

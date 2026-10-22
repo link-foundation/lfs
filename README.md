@@ -25,7 +25,8 @@ link chunks, so the volume does not fragment.
 - **No fragmentation.** Every file is one contiguous extent. Links, inodes and
   index nodes live in small relocatable chunks that fill the gaps between
   files. Online compaction moves everything down so the free space is one
-  extent again.
+  extent again. `lfs resize` grows a volume into a larger image or
+  partition, or shrinks it, in one atomic commit.
 - **Configurable layout.** The format can be the united doublets layout
   (64-byte records, byte-compatible with `UnitedMemoryLinks<u64>`), the split
   layout (16-byte data and a 48-byte index), or data only.
@@ -66,6 +67,7 @@ lfs links disk.lfs --source 245   # query the embedded links database
 lfs export-links disk.lfs store.lino
 
 lfs compact disk.lfs              # defragment the free space
+lfs resize disk.lfs --size 1G     # grow (or shrink, compacting first)
 lfs map disk.lfs > map.json       # open it in the visualizer
 lfs fsck disk.lfs
 ```

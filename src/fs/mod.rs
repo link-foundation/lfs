@@ -474,6 +474,12 @@ impl<D: BlockDevice> Fs<D> {
         self.device
     }
 
+    /// The device the volume lives on.
+    #[must_use]
+    pub const fn device(&self) -> &D {
+        &self.device
+    }
+
     /// The superblock as last committed (plus pending in-memory changes).
     #[must_use]
     pub const fn superblock(&self) -> &Superblock {

@@ -125,6 +125,46 @@ impl Space {
             .is_some_and(|(&free_start, &free_len)| free_start + free_len >= start + len)
     }
 
+    /// Changes the number of blocks. Growing appends free blocks; shrinking
+    /// needs every block past the new end to be free and returns `false`
+    /// (changing nothing) otherwise.
+    pub fn resize(&mut self, total: u64) -> bool {
+        let old = self.total;
+        if total < old {
+            if !self.is_free(total, old - total) {
+                return false;
+            }
+            let (&start, _) = self
+                .by_start
+                .range(..=total)
+                .next_back()
+                .expect("the tail is free");
+            self.remove_free(start);
+            if start < total {
+                self.insert_free(start, total - start);
+            }
+            // Fresh blocks freed again may still be listed past the end.
+            self.fresh_list.retain_mut(|(start, len)| {
+                *len = (*start + *len).min(total).saturating_sub(*start);
+                *len > 0
+            });
+        } else if total > old {
+            let mut start = old;
+            if let Some((&prev_start, &prev_len)) = self.by_start.range(..old).next_back() {
+                if prev_start + prev_len == old {
+                    self.remove_free(prev_start);
+                    start = prev_start;
+                }
+            }
+            self.insert_free(start, total - start);
+        }
+        let words = total.div_ceil(64) as usize;
+        self.used.resize(words, 0);
+        self.fresh.resize(words, 0);
+        self.total = total;
+        true
+    }
+
     fn insert_free(&mut self, start: u64, len: u64) {
         self.by_start.insert(start, len);
         self.by_len.insert((len, start));
@@ -290,6 +330,34 @@ impl Space {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resizing_appends_or_drops_free_blocks_at_the_end() {
+        let mut space = Space::new(100);
+        assert!(space.mark_used(0, 10));
+        assert!(space.mark_used(90, 5));
+        assert!(!space.resize(92));
+        assert_eq!(space.total(), 100);
+        assert!(space.resize(200));
+        assert_eq!(space.free_blocks(), 185);
+        assert_eq!(
+            space.free_extents().collect::<Vec<_>>(),
+            [(10, 80), (95, 105)]
+        );
+        assert_eq!(space.allocate(105, Fit::Best), Some(95));
+        assert!(space.is_used(199));
+        space.free(95, 105);
+        assert!(space.resize(95));
+        assert_eq!(space.free_extents().collect::<Vec<_>>(), [(10, 80)]);
+        assert!(!space.resize(64));
+        space.free(90, 5);
+        space.commit();
+        assert!(space.resize(64));
+        assert_eq!(space.free_extents().collect::<Vec<_>>(), [(10, 54)]);
+        assert_eq!(space.free_blocks(), 54);
+        assert!(!space.is_used(64));
+        assert!(space.mark_used(10, 54));
+    }
 
     #[test]
     fn best_fit_fills_the_smallest_gap() {

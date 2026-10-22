@@ -260,6 +260,16 @@ pub enum Command {
         /// Image file or device.
         image: PathBuf,
     },
+    /// Grows or shrinks a volume (shrinking compacts it first if needed).
+    Resize {
+        /// Image file or device.
+        image: PathBuf,
+        /// New size (`64M`, `2G`); an image file is extended or truncated to
+        /// it. Default: the whole device, after the image file or the
+        /// partition was enlarged.
+        #[arg(long, value_parser = cli::parse_size)]
+        size: Option<u64>,
+    },
     /// Mounts a volume (FUSE on Linux and macOS, Dokan on Windows, or NFS
     /// with `--nfs`).
     Mount {
